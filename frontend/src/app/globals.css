@@ -1,17 +1,39 @@
-@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap");
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ==========================================================================
+   NetraVaani design tokens
+   Palette is unchanged: warm beige, editorial surface, terracotta, espresso.
+   New tokens only add depth (shadows, highlights, glows) on top of it.
+   ========================================================================== */
 :root {
   --background: #F5F0E8;
   --foreground: #30251F;
   --surface: #FFFCF7;
   --accent: #C56845;
+  --accent-hover: #B05534;
+  --accent-deep: #A84A29;
   --soft-accent: #EED9CD;
   --border: #E7DFD4;
-  --font-serif: "Newsreader", "Playfair Display", "Georgia", "Cambria", serif;
+  --border-dark: #D6C7B7;
+  --muted: #75665D;
+  --faint: #A2948B;
+  --espresso: #1C140F;
+
+  /* Depth system: stacked, warm-tinted shadows read as real elevation */
+  --shadow-1: 0 1px 0 rgba(255, 252, 247, 0.9) inset, 0 1px 2px rgba(48, 37, 31, 0.05),
+    0 2px 6px -2px rgba(48, 37, 31, 0.06);
+  --shadow-2: 0 1px 0 rgba(255, 252, 247, 0.95) inset, 0 2px 4px rgba(48, 37, 31, 0.04),
+    0 10px 24px -8px rgba(48, 37, 31, 0.12), 0 24px 48px -24px rgba(48, 37, 31, 0.10);
+  --shadow-3: 0 1px 0 rgba(255, 252, 247, 1) inset, 0 4px 8px rgba(48, 37, 31, 0.05),
+    0 24px 48px -12px rgba(48, 37, 31, 0.18), 0 48px 96px -32px rgba(48, 37, 31, 0.16);
+  --glow-accent: 0 0 0 1px rgba(197, 104, 69, 0.35), 0 12px 32px -10px rgba(197, 104, 69, 0.45);
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 body {
@@ -19,6 +41,8 @@ body {
   background-color: var(--background);
   min-height: 100vh;
   letter-spacing: -0.01em;
+  font-feature-settings: "cv11", "ss03", "tnum" 0;
+  -webkit-font-smoothing: antialiased;
 }
 
 ::selection {
@@ -26,21 +50,251 @@ body {
   color: #30251F;
 }
 
-/* Custom Editorial Scrollbar */
+/* Scrollbar */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
 }
-
 ::-webkit-scrollbar-track {
-  background: #F5F0E8;
+  background: transparent;
 }
-
 ::-webkit-scrollbar-thumb {
   background: #D8CDC0;
   border-radius: 9999px;
+  border: 2px solid #F5F0E8;
 }
-
 ::-webkit-scrollbar-thumb:hover {
   background: #C56845;
+}
+
+:focus-visible {
+  outline: 2px solid rgba(197, 104, 69, 0.55);
+  outline-offset: 2px;
+  border-radius: 10px;
+}
+
+@layer components {
+  /* ---------- Surfaces ---------- */
+  .nv-card {
+    position: relative;
+    background: linear-gradient(180deg, #FFFDF9 0%, #FFFCF7 55%, #FBF6EF 100%);
+    border: 1px solid var(--border);
+    box-shadow: var(--shadow-2);
+    transition: box-shadow 0.4s var(--ease-out), border-color 0.3s var(--ease-out);
+  }
+  .nv-card-hover:hover {
+    box-shadow: var(--shadow-3);
+    border-color: var(--border-dark);
+  }
+
+  /* Recessed well used inside cards for data groups */
+  .nv-well {
+    background: linear-gradient(180deg, #F2ECE3 0%, #F6F1EA 100%);
+    border: 1px solid var(--border);
+    box-shadow: inset 0 1px 2px rgba(48, 37, 31, 0.06), 0 1px 0 rgba(255, 252, 247, 0.9);
+  }
+
+  /* Frosted header / bars */
+  .nv-glass {
+    background: rgba(255, 252, 247, 0.72);
+    backdrop-filter: saturate(160%) blur(18px);
+    -webkit-backdrop-filter: saturate(160%) blur(18px);
+    border-bottom: 1px solid rgba(214, 199, 183, 0.55);
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.8) inset, 0 8px 24px -16px rgba(48, 37, 31, 0.18);
+  }
+
+  /* Dark espresso panel for hero bands */
+  .nv-espresso {
+    background:
+      radial-gradient(120% 140% at 85% -20%, rgba(197, 104, 69, 0.38) 0%, rgba(197, 104, 69, 0) 55%),
+      radial-gradient(90% 120% at -10% 120%, rgba(197, 104, 69, 0.16) 0%, rgba(197, 104, 69, 0) 60%),
+      linear-gradient(160deg, #2A1F19 0%, #1C140F 60%, #170F0B 100%);
+    color: #FFFCF7;
+    border: 1px solid rgba(255, 252, 247, 0.06);
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.08) inset, 0 30px 60px -30px rgba(28, 20, 15, 0.55);
+  }
+
+  /* ---------- Buttons: bevelled, pressable ---------- */
+  .nv-btn-primary {
+    position: relative;
+    color: #FFFCF7 !important;
+    background: linear-gradient(180deg, #D2774F 0%, #C56845 48%, #B85B39 100%) !important;
+    border: 1px solid #A84A29 !important;
+    box-shadow: 0 1px 0 rgba(255, 236, 222, 0.45) inset, 0 -2px 0 rgba(122, 54, 30, 0.25) inset,
+      0 2px 0 #9A4425, 0 8px 18px -8px rgba(197, 104, 69, 0.75);
+    transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out), filter 0.2s;
+  }
+  .nv-btn-primary:hover:not(:disabled) {
+    filter: brightness(1.05) saturate(1.05);
+    transform: translateY(-1px);
+    box-shadow: 0 1px 0 rgba(255, 236, 222, 0.5) inset, 0 -2px 0 rgba(122, 54, 30, 0.25) inset,
+      0 3px 0 #9A4425, 0 14px 26px -10px rgba(197, 104, 69, 0.8);
+  }
+  .nv-btn-primary:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 rgba(255, 236, 222, 0.3) inset, 0 0 0 #9A4425, 0 4px 10px -6px rgba(197, 104, 69, 0.6);
+  }
+
+  .nv-btn-dark {
+    color: #FFFCF7 !important;
+    background: linear-gradient(180deg, #3A2D26 0%, #2A1F19 50%, #1C140F 100%) !important;
+    border: 1px solid #120C09 !important;
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.14) inset, 0 2px 0 #0D0806, 0 8px 18px -8px rgba(28, 20, 15, 0.7);
+    transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+  }
+  .nv-btn-dark:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.16) inset, 0 3px 0 #0D0806, 0 14px 26px -10px rgba(28, 20, 15, 0.75);
+  }
+  .nv-btn-dark:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.1) inset, 0 0 0 #0D0806;
+  }
+
+  .nv-btn-ghost {
+    background: linear-gradient(180deg, #FFFDF9 0%, #F8F3EC 100%);
+    border: 1px solid var(--border);
+    box-shadow: 0 1px 0 #FFFFFF inset, 0 1px 0 rgba(214, 199, 183, 0.9), 0 4px 10px -6px rgba(48, 37, 31, 0.18);
+    transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out), border-color 0.2s;
+  }
+  .nv-btn-ghost:hover:not(:disabled) {
+    transform: translateY(-1px);
+    border-color: var(--border-dark);
+    box-shadow: 0 1px 0 #FFFFFF inset, 0 2px 0 rgba(214, 199, 183, 0.9), 0 10px 20px -10px rgba(48, 37, 31, 0.25);
+  }
+  .nv-btn-ghost:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: 0 1px 0 #FFFFFF inset, 0 0 0 rgba(214, 199, 183, 0.9);
+  }
+
+  /* Soft terracotta secondary */
+  .nv-btn-soft {
+    background: linear-gradient(180deg, #F3E2D7 0%, #EED9CD 100%) !important;
+    border: 1px solid #DFBA9C !important;
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.85) inset, 0 2px 0 #D9B49A, 0 6px 14px -8px rgba(197, 104, 69, 0.45);
+    transition: transform 0.18s var(--ease-out), box-shadow 0.18s var(--ease-out);
+  }
+  .nv-btn-soft:hover:not(:disabled) {
+    transform: translateY(-1px);
+  }
+  .nv-btn-soft:active:not(:disabled) {
+    transform: translateY(2px);
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.85) inset, 0 0 0 #D9B49A;
+  }
+
+  /* ---------- Inputs ---------- */
+  .nv-input {
+    background: linear-gradient(180deg, #F3EEE6 0%, #FAF6F0 100%) !important;
+    border: 1px solid var(--border) !important;
+    box-shadow: inset 0 1px 2px rgba(48, 37, 31, 0.07);
+    transition: border-color 0.2s, box-shadow 0.25s var(--ease-out), background 0.25s;
+  }
+  .nv-input:focus {
+    outline: none;
+    background: #FFFCF7 !important;
+    border-color: var(--accent) !important;
+    box-shadow: inset 0 1px 2px rgba(48, 37, 31, 0.04), 0 0 0 4px rgba(197, 104, 69, 0.14);
+  }
+
+  /* ---------- Labels / chips ---------- */
+  .nv-eyebrow {
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .nv-chip {
+    box-shadow: 0 1px 0 rgba(255, 252, 247, 0.8) inset, 0 1px 2px rgba(48, 37, 31, 0.06);
+  }
+
+  /* Live status dot with sonar ring */
+  .nv-live-dot {
+    position: relative;
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 9999px;
+    background: var(--accent);
+    box-shadow: 0 0 0 3px rgba(197, 104, 69, 0.18);
+  }
+  .nv-live-dot::after {
+    content: "";
+    position: absolute;
+    inset: -4px;
+    border-radius: 9999px;
+    border: 1px solid rgba(197, 104, 69, 0.6);
+    animation: nv-sonar 2.2s var(--ease-out) infinite;
+  }
+
+  /* Hairline with a highlight, for dividers inside cards */
+  .nv-divider {
+    height: 1px;
+    background: linear-gradient(90deg, transparent, var(--border-dark) 15%, var(--border-dark) 85%, transparent);
+  }
+
+  /* Text with a subtle engraved look for large serif headings */
+  .nv-engraved {
+    text-shadow: 0 1px 0 rgba(255, 252, 247, 0.9);
+  }
+
+  /* Shimmer for loading placeholders */
+  .nv-shimmer {
+    background: linear-gradient(100deg, #F2ECE3 20%, #FBF7F1 40%, #F2ECE3 60%);
+    background-size: 200% 100%;
+    animation: nv-shimmer 1.6s linear infinite;
+  }
+}
+
+/* Paper grain overlay — keeps flat surfaces from looking synthetic */
+.nv-grain::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.35;
+  mix-blend-mode: multiply;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0.19  0 0 0 0 0.15  0 0 0 0 0.12  0 0 0 0.08 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+}
+
+@keyframes nv-sonar {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.9;
+  }
+  100% {
+    transform: scale(2.2);
+    opacity: 0;
+  }
+}
+
+@keyframes nv-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+@keyframes nv-grid-drift {
+  0% {
+    background-position: 0 0;
+  }
+  100% {
+    background-position: 0 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }
