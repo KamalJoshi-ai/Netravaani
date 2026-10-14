@@ -1,0 +1,46 @@
+@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F5F0E8;
+  --foreground: #30251F;
+  --surface: #FFFCF7;
+  --accent: #C56845;
+  --soft-accent: #EED9CD;
+  --border: #E7DFD4;
+  --font-serif: "Newsreader", "Playfair Display", "Georgia", "Cambria", serif;
+}
+
+body {
+  color: var(--foreground);
+  background-color: var(--background);
+  min-height: 100vh;
+  letter-spacing: -0.01em;
+}
+
+::selection {
+  background-color: #EED9CD;
+  color: #30251F;
+}
+
+/* Custom Editorial Scrollbar */
+::-webkit-scrollbar {
+  width: 7px;
+  height: 7px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F5F0E8;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #D8CDC0;
+  border-radius: 9999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #C56845;
+}
