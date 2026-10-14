@@ -14,8 +14,9 @@ import {
   Battery,
   Cpu,
   Info,
-} from "@/lib/noIcons";
+} from "lucide-react";
 import { apiClient, DeviceItem } from "@/lib/api";
+import { motion } from "@/components/ui/motion";
 
 // Exact UUIDs from NetraVaani-Device-Kit-v1.1.1
 export const NV_SERVICE_UUID = "a7c10001-5e4b-4d2a-9c1e-3f6e7a2b9d01";
@@ -135,7 +136,7 @@ export default function BleCommissioningModal({
   }, []);
 
   // 1. Connect over Web Bluetooth
-  const handleConnectBluetooth = async () => {
+  const handleConnectBluetooth = async (scanAll = false) => {
     setErrorMsg(null);
     setIsBusy(true);
 
@@ -154,10 +155,14 @@ export default function BleCommissioningModal({
     }
 
     try {
-      addLog("Opening Bluetooth device chooser for prefix 'NPG'...");
+      addLog(
+        scanAll
+          ? "Opening Bluetooth device chooser for all nearby devices..."
+          : "Opening Bluetooth device chooser for prefix 'NPG'..."
+      );
 
       const device = await navigator.bluetooth.requestDevice({
-        filters: [{ namePrefix: "NPG" }],
+        ...(scanAll ? { acceptAllDevices: true } : { filters: [{ namePrefix: "NPG" }] }),
         optionalServices: [
           NV_SERVICE_UUID,
           CHORDS_SERVICE_UUID,
@@ -240,9 +245,21 @@ export default function BleCommissioningModal({
       setStep("IDENTITY_READ");
       addLog("Connected and identity read successfully");
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Bluetooth connection cancelled or failed";
+      const isChooserClosed = err instanceof Error && err.name === "NotFoundError";
+      const msg = isChooserClosed
+        ? "No device was selected. The chooser closed before a board was picked. " +
+          "Check that the board is powered and in its setup window (press RESET or hold BOOT for 3s), " +
+          "that Bluetooth is on, and that Chrome is allowed to use Bluetooth in macOS System Settings, " +
+          "Privacy & Security, Bluetooth. If the board does not appear, try \"Scan all nearby devices\"."
+        : err instanceof Error
+        ? err.message
+        : "Bluetooth connection cancelled or failed";
       setErrorMsg(msg);
-      addLog(`Bluetooth error: ${msg}`);
+      addLog(
+        isChooserClosed
+          ? "Chooser closed without a selection (no board picked or none found)."
+          : `Bluetooth error: ${msg}`
+      );
     } finally {
       setIsBusy(false);
     }
@@ -446,8 +463,8 @@ export default function BleCommissioningModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 bg-[#30251F]/70 backdrop-blur-sm flex items-center justify-center p-4 selection:bg-[#EED9CD]">
-      <div className="bg-[#FFFCF7] border border-[#E7DFD4] rounded-2xl max-w-2xl w-full p-6 space-y-5 shadow-2xl overflow-hidden max-h-[92vh] flex flex-col text-[#30251F]">
+    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.25 }} className="fixed inset-0 z-50 bg-[#1C140F]/55 backdrop-blur-[6px] flex items-center justify-center p-4 selection:bg-[#EED9CD] [perspective:1400px]">
+      <motion.div initial={{ opacity: 0, y: 30, rotateX: 14, scale: 0.94 }} animate={{ opacity: 1, y: 0, rotateX: 0, scale: 1 }} transition={{ type: "spring", stiffness: 280, damping: 28 }} style={{ transformOrigin: "50% 100%", boxShadow: "var(--shadow-3)" }} className="nv-card rounded-3xl max-w-2xl w-full p-6 space-y-5 overflow-hidden max-h-[92vh] flex flex-col text-[#30251F]">
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3 border-b border-[#E7DFD4]">
           <div className="flex items-center gap-2.5">
@@ -455,7 +472,7 @@ export default function BleCommissioningModal({
               <Bluetooth className="w-5 h-5 animate-pulse" />
             </div>
             <div>
-              <h3 className="font-serif font-bold text-[#30251F] text-lg leading-tight">
+              <h3 className="tracking-tight font-bold text-[#30251F] text-lg leading-tight">
                 NPG Lite Device Commissioning
               </h3>
               <span className="text-xs text-[#75665D]">
@@ -472,37 +489,37 @@ export default function BleCommissioningModal({
         </div>
 
         {/* Multi-Step Pipeline Indicator */}
-        <div className="flex items-center justify-between bg-[#F5F0E8] p-2.5 rounded-xl text-xs font-semibold text-[#75665D] border border-[#E7DFD4]">
+        <div className="nv-well flex items-center justify-between p-2.5 rounded-xl text-xs font-semibold text-[#75665D] border border-[#E7DFD4]">
           <span
             className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
-              step === "BLUETOOTH_CONNECT" ? "bg-[#FFFCF7] shadow-xs text-[#C56845] font-bold" : ""
-            }`}
+ step === "BLUETOOTH_CONNECT" ? "bg-[#FFFCF7] text-[#C56845] font-bold shadow-[0_1px_0_#fff_inset,0_2px_0_#D6C7B7,0_6px_12px_-6px_rgba(48,37,31,.35)]" : ""
+ }`}
           >
             <Bluetooth className="w-3.5 h-3.5" /> 1. Bluetooth
           </span>
           <ArrowRight className="w-3 h-3 text-[#A2948B]" />
           <span
             className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
-              step === "IDENTITY_READ" ? "bg-[#FFFCF7] shadow-xs text-[#C56845] font-bold" : ""
-            }`}
+ step === "IDENTITY_READ" ? "bg-[#FFFCF7] text-[#C56845] font-bold shadow-[0_1px_0_#fff_inset,0_2px_0_#D6C7B7,0_6px_12px_-6px_rgba(48,37,31,.35)]" : ""
+ }`}
           >
             <Cpu className="w-3.5 h-3.5" /> 2. Identity
           </span>
           <ArrowRight className="w-3 h-3 text-[#A2948B]" />
           <span
             className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
-              step === "WIFI_PROVISION" ? "bg-[#FFFCF7] shadow-xs text-[#C56845] font-bold" : ""
-            }`}
+ step === "WIFI_PROVISION" ? "bg-[#FFFCF7] text-[#C56845] font-bold shadow-[0_1px_0_#fff_inset,0_2px_0_#D6C7B7,0_6px_12px_-6px_rgba(48,37,31,.35)]" : ""
+ }`}
           >
             <Wifi className="w-3.5 h-3.5" /> 3. Provision
           </span>
           <ArrowRight className="w-3 h-3 text-[#A2948B]" />
           <span
             className={`flex items-center gap-1.5 px-2 py-1 rounded-lg ${
-              step === "VERIFYING_HEARTBEAT" || step === "COMMISSIONED"
-                ? "bg-[#FFFCF7] shadow-xs text-emerald-800 font-bold"
-                : ""
-            }`}
+ step === "VERIFYING_HEARTBEAT" || step === "COMMISSIONED"
+ ? "bg-[#FFFCF7] shadow-xs text-[#30251F] font-bold"
+ : ""
+ }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5" /> 4. Verify
           </span>
@@ -510,13 +527,13 @@ export default function BleCommissioningModal({
 
         {/* Error Notification */}
         {errorMsg && (
-          <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 rounded-xl text-xs flex items-start gap-2 shadow-xs">
-            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+          <div className="p-3 bg-[#F9ECE7] border border-[#E5B9A3] text-[#8C3A1E] rounded-xl text-xs flex items-start gap-2 shadow-xs">
+            <AlertTriangle className="w-4 h-4 text-[#C56845] shrink-0 mt-0.5" />
             <div className="flex-1">
               <span className="font-bold block">Commissioning Error:</span>
               <p className="leading-relaxed">{errorMsg}</p>
             </div>
-            <button onClick={() => setErrorMsg(null)} className="text-rose-400 hover:text-rose-700">
+            <button onClick={() => setErrorMsg(null)} className="text-[#C56845] hover:text-[#8C3A1E]">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -533,7 +550,7 @@ export default function BleCommissioningModal({
                 </div>
               </div>
               <div>
-                <h4 className="font-serif font-bold text-base text-[#30251F]">Connect NPG Lite Device via Bluetooth</h4>
+                <h4 className="tracking-tight font-bold text-base text-[#30251F]">Connect NPG Lite Device via Bluetooth</h4>
                 <p className="text-xs text-[#75665D] max-w-md mx-auto mt-1 leading-relaxed">
                   Ensure the NPG Lite / ESP32 board is powered on. If previously provisioned, press the board&apos;s
                   <strong className="text-[#30251F]"> RESET</strong> button (or hold BOOT for 3s) to open the 5-minute setup window.
@@ -543,12 +560,22 @@ export default function BleCommissioningModal({
               <div className="pt-2 flex flex-wrap items-center justify-center gap-2.5">
                 <button
                   type="button"
-                  onClick={handleConnectBluetooth}
+                  onClick={() => handleConnectBluetooth()}
                   disabled={isBusy}
-                  className="px-6 py-3 rounded-xl text-xs font-bold uppercase tracking-wider bg-[#C56845] hover:bg-[#B05534] text-white shadow-xs transition flex items-center gap-2 disabled:opacity-50"
+                  className="px-6 py-3 rounded-xl text-xs font-bold uppercase tracking-wider nv-btn-primary shadow-xs transition flex items-center gap-2 disabled:opacity-50"
                 >
                   {isBusy ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Bluetooth className="w-4 h-4" />}
                   <span>Connect NPG Lite</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleConnectBluetooth(true)}
+                  disabled={isBusy}
+                  className="nv-btn-ghost px-4 py-3 rounded-xl text-xs font-semibold uppercase tracking-wider text-[#75665D] hover:text-[#30251F] flex items-center gap-2 disabled:opacity-50"
+                  title="Use this if your board's Bluetooth name does not start with NPG"
+                >
+                  <Bluetooth className="w-4 h-4" />
+                  <span>Scan all nearby devices</span>
                 </button>
               </div>
 
@@ -556,13 +583,13 @@ export default function BleCommissioningModal({
               {!bluetoothSupported && (
                 <div className="pt-2 text-left space-y-2">
                   {!isSecureContext ? (
-                    <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl text-xs text-amber-800 space-y-2">
+                    <div className="p-3 bg-[#FBF3E8] border border-[#DFBA9C] rounded-xl text-xs text-[#8C4318] space-y-2">
                       <p className="font-bold flex items-center gap-1.5">
-                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                        <AlertTriangle className="w-4 h-4 text-[#B05534] shrink-0" />
                         Chromium Security Rule: Non-Localhost Origin
                       </p>
-                      <p className="text-[11px] text-amber-900 leading-relaxed">
-                        You are browsing on <code className="bg-amber-100 px-1 py-0.5 rounded font-mono font-bold">{typeof window !== "undefined" ? window.location.origin : ""}</code>.
+                      <p className="text-[11px] text-[#6E3412] leading-relaxed">
+                        You are browsing on <code className="bg-[#F4DFC8] px-1 py-0.5 rounded font-mono font-bold">{typeof window !== "undefined" ? window.location.origin : ""}</code>.
                         Chromium (Edge &amp; Chrome) strictly removes Web Bluetooth on non-localhost HTTP addresses.
                       </p>
                       <button
@@ -576,13 +603,13 @@ export default function BleCommissioningModal({
                       </button>
                     </div>
                   ) : (
-                    <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-slate-700 space-y-2">
-                      <p className="font-bold text-slate-900 flex items-center gap-1.5">
-                        <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                    <div className="p-3.5 bg-[#F5F0E8] border border-[#D6C7B7] rounded-xl text-xs text-[#30251F] space-y-2">
+                      <p className="font-bold text-[#1C140F] flex items-center gap-1.5">
+                        <Info className="w-4 h-4 text-[#C56845] shrink-0" />
                         How to Enable Web Bluetooth in Microsoft Edge:
                       </p>
-                      <ol className="list-decimal list-inside space-y-1 text-slate-600 text-[11px]">
-                        <li>Open a new tab and paste: <code className="font-mono bg-blue-100 px-1 py-0.5 rounded font-bold text-slate-900 select-all">edge://flags/#enable-web-bluetooth</code></li>
+                      <ol className="list-decimal list-inside space-y-1 text-[#75665D] text-[11px]">
+                        <li>Open a new tab and paste: <code className="font-mono bg-[#EED9CD] px-1 py-0.5 rounded font-bold text-[#1C140F] select-all">edge://flags/#enable-web-bluetooth</code></li>
                         <li>Set <strong>Web Bluetooth</strong> to <strong>Enabled</strong>.</li>
                         <li>Click the <strong>Restart</strong> button at the bottom of Edge.</li>
                         <li>Ensure Bluetooth is turned ON in Windows Quick Settings (<kbd className="font-mono bg-white px-1 border rounded">Win + A</kbd>).</li>
@@ -604,29 +631,29 @@ export default function BleCommissioningModal({
                   <Cpu className="w-4 h-4 text-[#C56845]" />
                   Verified Hardware Identity (Read over BLE)
                 </span>
-                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-emerald-100 text-emerald-800">
+                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#EED9CD] text-[#30251F]">
                   BLE GATT Connected
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5 text-xs">
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Hardware MAC ID</span>
-                  <span className="font-mono font-bold text-slate-900 block truncate">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Hardware MAC ID</span>
+                  <span className="font-mono font-bold text-[#1C140F] block truncate">
                     {deviceIdentity.hardwareId}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Firmware Version</span>
-                  <span className="font-mono text-slate-800 block">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Firmware Version</span>
+                  <span className="font-mono text-[#30251F] block">
                     {deviceIdentity.firmware || "v1.1.1-esp32"}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Battery Level</span>
-                  <span className="font-bold text-emerald-700 flex items-center gap-1">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Battery Level</span>
+                  <span className="font-bold text-[#7A361E] flex items-center gap-1">
                     <Battery className="w-3.5 h-3.5" /> {deviceIdentity.battery || 100}%
                   </span>
                 </div>
@@ -635,35 +662,35 @@ export default function BleCommissioningModal({
               {/* nv-2.0.0 Calibration & Diagnostics status */}
               {(deviceIdentity.calEog || deviceIdentity.calEmg || deviceIdentity.seqState) && (
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-xs">
-                  <div className="bg-white p-2 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block">EOG Calibration</span>
-                    <span className="font-bold text-slate-800 uppercase block">{deviceIdentity.calEog || "-"}</span>
+                  <div className="bg-white p-2 rounded-xl border border-[#E7DFD4]">
+                    <span className="text-[10px] text-[#75665D] block">EOG Calibration</span>
+                    <span className="font-bold text-[#30251F] uppercase block">{deviceIdentity.calEog || "-"}</span>
                   </div>
-                  <div className="bg-white p-2 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block">EMG Calibration</span>
-                    <span className="font-bold text-slate-800 uppercase block">{deviceIdentity.calEmg || "-"}</span>
+                  <div className="bg-white p-2 rounded-xl border border-[#E7DFD4]">
+                    <span className="text-[10px] text-[#75665D] block">EMG Calibration</span>
+                    <span className="font-bold text-[#30251F] uppercase block">{deviceIdentity.calEmg || "-"}</span>
                   </div>
-                  <div className="bg-white p-2 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block">Detector State</span>
-                    <span className="font-mono text-slate-800 block">{deviceIdentity.seqState || "IDLE"}</span>
+                  <div className="bg-white p-2 rounded-xl border border-[#E7DFD4]">
+                    <span className="text-[10px] text-[#75665D] block">Detector State</span>
+                    <span className="font-mono text-[#30251F] block">{deviceIdentity.seqState || "IDLE"}</span>
                   </div>
-                  <div className="bg-white p-2 rounded-xl border border-slate-200">
-                    <span className="text-[10px] text-slate-500 block">Reset Source</span>
-                    <span className="font-mono text-slate-800 block">{deviceIdentity.lastReset || "POWERON"}</span>
+                  <div className="bg-white p-2 rounded-xl border border-[#E7DFD4]">
+                    <span className="text-[10px] text-[#75665D] block">Reset Source</span>
+                    <span className="font-mono text-[#30251F] block">{deviceIdentity.lastReset || "POWERON"}</span>
                   </div>
                 </div>
               )}
 
               {deviceIdentity.channels && (
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200 text-xs">
-                  <span className="text-[10px] text-slate-500 block mb-1">Analog BioAmp Channels:</span>
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4] text-xs">
+                  <span className="text-[10px] text-[#75665D] block mb-1">Analog BioAmp Channels:</span>
                   <div className="flex items-center gap-2">
                     {deviceIdentity.channels.map((ch, idx) => (
                       <span
                         key={idx}
                         className={`text-[10px] font-bold px-2 py-0.5 rounded ${
-                          ch === "ok" ? "bg-emerald-50 text-emerald-700" : "bg-amber-50 text-amber-700"
-                        }`}
+ ch === "ok" ? "bg-[#FFFCF7] text-[#7A361E]" : "bg-[#FBF3E8] text-[#8C4318]"
+ }`}
                       >
                         Channel {idx + 1}: {ch.toUpperCase()}
                       </span>
@@ -678,7 +705,7 @@ export default function BleCommissioningModal({
                 type="button"
                 onClick={readIdentity}
                 disabled={isBusy}
-                className="text-xs font-semibold text-slate-600 hover:text-slate-900 flex items-center gap-1"
+                className="text-xs font-semibold text-[#75665D] hover:text-[#1C140F] flex items-center gap-1"
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Re-read Identity
               </button>
@@ -687,7 +714,7 @@ export default function BleCommissioningModal({
                 type="button"
                 onClick={handleRegisterDevice}
                 disabled={isBusy}
-                className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-[#C56845] hover:bg-[#B05534] text-white shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
+                className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider nv-btn-primary shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
                 <span>Register with Backend &amp; Continue &rarr;</span>
@@ -699,21 +726,21 @@ export default function BleCommissioningModal({
         {/* STEP 3: WI-FI PROVISIONING & SEND SETTINGS */}
         {step === "WIFI_PROVISION" && (
           <form onSubmit={handleSendProvisioning} className="space-y-4 overflow-y-auto pr-1">
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 text-xs">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="font-bold text-slate-800">Assigned Backend Credentials</span>
-                <span className="font-mono text-[10px] text-slate-500">
+            <div className="bg-[#F5F0E8] border border-[#E7DFD4] rounded-2xl p-4 space-y-3 text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-[#E7DFD4]">
+                <span className="font-bold text-[#30251F]">Assigned Backend Credentials</span>
+                <span className="font-mono text-[10px] text-[#75665D]">
                   App Device ID: <strong>{registeredDeviceId}</strong>
                 </span>
               </div>
 
               <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                <div className="bg-white p-2 rounded-lg border border-slate-200 truncate">
-                  <span className="text-[10px] text-slate-400 block font-sans">Device ID:</span>
+                <div className="bg-white p-2 rounded-lg border border-[#E7DFD4] truncate">
+                  <span className="text-[10px] text-[#A2948B] block font-sans">Device ID:</span>
                   {registeredDeviceId}
                 </div>
-                <div className="bg-white p-2 rounded-lg border border-slate-200 truncate">
-                  <span className="text-[10px] text-slate-400 block font-sans">Token (Bearer):</span>
+                <div className="bg-white p-2 rounded-lg border border-[#E7DFD4] truncate">
+                  <span className="text-[10px] text-[#A2948B] block font-sans">Token (Bearer):</span>
                   {registeredToken ? `${registeredToken.slice(0, 16)}...` : "Generated"}
                 </div>
               </div>
@@ -722,7 +749,7 @@ export default function BleCommissioningModal({
             {/* Wi-Fi & Backend URL Inputs */}
             <div className="space-y-3">
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                <label className="text-xs font-semibold text-[#30251F] block mb-1">
                   Wi-Fi Network Name (2.4 GHz SSID) *
                 </label>
                 <input
@@ -730,13 +757,13 @@ export default function BleCommissioningModal({
                   value={ssid}
                   onChange={(e) => setSsid(e.target.value)}
                   placeholder="e.g. Hospital-Guest or Home-WiFi"
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#59c7f3]"
+                  className="w-full bg-white border border-[#D6C7B7] rounded-xl px-3 py-2 text-xs font-mono text-[#30251F] focus:outline-none focus:border-[#59c7f3]"
                   required
                 />
               </div>
 
               <div>
-                <label className="text-xs font-semibold text-slate-700 block mb-1">
+                <label className="text-xs font-semibold text-[#30251F] block mb-1">
                   Wi-Fi Password
                 </label>
                 <input
@@ -744,16 +771,16 @@ export default function BleCommissioningModal({
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter Wi-Fi password (leave blank if open network)"
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#59c7f3]"
+                  className="w-full bg-white border border-[#D6C7B7] rounded-xl px-3 py-2 text-xs font-mono text-[#30251F] focus:outline-none focus:border-[#59c7f3]"
                 />
               </div>
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-semibold text-slate-700">
+                  <label className="text-xs font-semibold text-[#30251F]">
                     Backend URL the Device Will Use *
                   </label>
-                  <span className="text-[11px] text-slate-400 font-mono">
+                  <span className="text-[11px] text-[#A2948B] font-mono">
                     Must be reachable LAN IP (not localhost)
                   </span>
                 </div>
@@ -762,18 +789,18 @@ export default function BleCommissioningModal({
                   value={backendUrl}
                   onChange={(e) => setBackendUrl(e.target.value)}
                   placeholder="http://192.168.1.100:5000"
-                  className="w-full bg-white border border-slate-300 rounded-xl px-3 py-2 text-xs font-mono text-slate-800 focus:outline-none focus:border-[#59c7f3]"
+                  className="w-full bg-white border border-[#D6C7B7] rounded-xl px-3 py-2 text-xs font-mono text-[#30251F] focus:outline-none focus:border-[#59c7f3]"
                   required
                 />
                 {availableLanIps.length > 0 && (
-                  <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-500">
+                  <div className="flex items-center gap-2 pt-1 text-[11px] text-[#75665D]">
                     <span>Detected LAN IPs:</span>
                     {availableLanIps.map((ip) => (
                       <button
                         key={ip}
                         type="button"
                         onClick={() => setBackendUrl(`http://${ip}:5000`)}
-                        className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-slate-100 hover:bg-slate-200 text-[#0284c7] underline"
+                        className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-[#F2ECE3] hover:bg-[#E7DFD4] text-[#0284c7] underline"
                       >
                         {ip}
                       </button>
@@ -787,7 +814,7 @@ export default function BleCommissioningModal({
               <button
                 type="button"
                 onClick={handleTestAlarm}
-                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-slate-600 border border-slate-200 hover:bg-slate-50 transition"
+                className="px-3 py-1.5 rounded-xl text-xs font-semibold text-[#75665D] border border-[#E7DFD4] hover:bg-[#F5F0E8] transition"
               >
                 Test Alarm LED
               </button>
@@ -795,7 +822,7 @@ export default function BleCommissioningModal({
               <button
                 type="submit"
                 disabled={isBusy || !ssid.trim() || !backendUrl.trim()}
-                className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider bg-[#C56845] hover:bg-[#B05534] text-white shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
+                className="px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider nv-btn-primary shadow-xs transition flex items-center gap-1.5 disabled:opacity-50"
               >
                 {isBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
                 <span>Send Settings to Device</span>
@@ -814,7 +841,7 @@ export default function BleCommissioningModal({
               </div>
             </div>
             <div>
-              <h4 className="font-serif font-bold text-base text-[#30251F]">
+              <h4 className="tracking-tight font-bold text-base text-[#30251F]">
                 Verifying Wi-Fi &amp; Waiting for Authoritative Heartbeat...
               </h4>
               <p className="text-xs text-[#75665D] mt-1 max-w-md mx-auto leading-relaxed">
@@ -832,68 +859,68 @@ export default function BleCommissioningModal({
         {/* STEP 5: VERIFIED & COMMISSIONED ONLINE */}
         {step === "COMMISSIONED" && verifiedDevice && (
           <div className="space-y-4 overflow-y-auto pr-1">
-            <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-center gap-3">
-              <div className="h-10 w-10 rounded-xl bg-emerald-600 text-white flex items-center justify-center shrink-0 shadow-xs">
+            <div className="p-4 bg-[#FFFCF7] border border-[#D6C7B7] rounded-2xl flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-[#C56845] text-white flex items-center justify-center shrink-0 shadow-xs">
                 <CheckCircle2 className="w-6 h-6" />
               </div>
               <div>
-                <h4 className="text-sm font-bold text-emerald-950">
+                <h4 className="text-sm font-bold text-[#1C140F]">
                   Device Verified &amp; ONLINE!
                 </h4>
-                <p className="text-xs text-emerald-700">
+                <p className="text-xs text-[#7A361E]">
                   Real HTTP heartbeat received from hardware over Wi-Fi. Device is authoritative and active.
                 </p>
               </div>
             </div>
 
-            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 space-y-3 text-xs">
-              <div className="flex items-center justify-between pb-2 border-b border-slate-200">
-                <span className="font-bold text-slate-800">Confirmed Device Telemetry</span>
-                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            <div className="bg-[#F5F0E8] border border-[#E7DFD4] rounded-2xl p-4 space-y-3 text-xs">
+              <div className="flex items-center justify-between pb-2 border-b border-[#E7DFD4]">
+                <span className="font-bold text-[#30251F]">Confirmed Device Telemetry</span>
+                <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-bold bg-[#EED9CD] text-[#30251F]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#C56845] animate-pulse" />
                   ONLINE
                 </span>
               </div>
 
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">App Device ID</span>
-                  <span className="font-mono font-bold text-slate-900 block truncate">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">App Device ID</span>
+                  <span className="font-mono font-bold text-[#1C140F] block truncate">
                     {verifiedDevice.deviceId}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Hardware MAC</span>
-                  <span className="font-mono font-bold text-slate-900 block truncate">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Hardware MAC</span>
+                  <span className="font-mono font-bold text-[#1C140F] block truncate">
                     {verifiedDevice.hardwareId}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Status</span>
-                  <span className="font-bold text-slate-900 block">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Status</span>
+                  <span className="font-bold text-[#1C140F] block">
                     {verifiedDevice.status}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Firmware</span>
-                  <span className="font-mono text-slate-800 block">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Firmware</span>
+                  <span className="font-mono text-[#30251F] block">
                     {verifiedDevice.firmwareVersion || "v1.1.1-esp32"}
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Config State</span>
-                  <span className="text-slate-800 font-mono block">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Config State</span>
+                  <span className="text-[#30251F] font-mono block">
                     v{verifiedDevice.appliedConfigVersion || 1} (Applied)
                   </span>
                 </div>
 
-                <div className="bg-white p-2.5 rounded-xl border border-slate-200">
-                  <span className="text-[10px] text-slate-500 block">Last Seen</span>
-                  <span className="text-emerald-700 font-bold block">
+                <div className="bg-white p-2.5 rounded-xl border border-[#E7DFD4]">
+                  <span className="text-[10px] text-[#75665D] block">Last Seen</span>
+                  <span className="text-[#7A361E] font-bold block">
                     {new Date(verifiedDevice.lastSeenAt || "").toLocaleTimeString()}
                   </span>
                 </div>
@@ -904,7 +931,7 @@ export default function BleCommissioningModal({
               <button
                 type="button"
                 onClick={handleFinish}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider bg-[#C56845] hover:bg-[#B05534] text-white shadow-xs transition flex items-center gap-1.5"
+                className="px-5 py-2.5 rounded-xl text-xs font-bold uppercase tracking-wider nv-btn-primary shadow-xs transition flex items-center gap-1.5"
               >
                 <span>Finish &amp; View in Registry</span>
                 <ArrowRight className="w-3.5 h-3.5" />
@@ -915,37 +942,37 @@ export default function BleCommissioningModal({
 
         {/* Eye Calibration (nv-2.0.0 Section 4) */}
         {provisionCharRef.current && (
-          <div className="pt-2 border-t border-slate-100 space-y-1.5">
+          <div className="pt-2 border-t border-[#F2ECE3] space-y-1.5">
             <div className="flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700">Eye Calibration (Per-Patient)</span>
-              <span className="text-[11px] text-slate-400">Run while patient is wearing electrodes</span>
+              <span className="font-bold text-[#30251F]">Eye Calibration (Per-Patient)</span>
+              <span className="text-[11px] text-[#A2948B]">Run while patient is wearing electrodes</span>
             </div>
             <div className="flex flex-wrap gap-2">
               <button
                 type="button"
                 onClick={handleCalibrateRest}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 transition"
+                className="px-2.5 py-1.5 rounded-lg border border-[#E7DFD4] bg-white hover:bg-[#F5F0E8] text-[11px] font-semibold text-[#30251F] transition"
               >
                 1. Recalibrate (Keep Still 4.5s)
               </button>
               <button
                 type="button"
                 onClick={handleCalibrateUp}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 transition"
+                className="px-2.5 py-1.5 rounded-lg border border-[#E7DFD4] bg-white hover:bg-[#F5F0E8] text-[11px] font-semibold text-[#30251F] transition"
               >
                 2. Calibrate UP (Look Up)
               </button>
               <button
                 type="button"
                 onClick={handleCalibrateDown}
-                className="px-2.5 py-1.5 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-[11px] font-semibold text-slate-700 transition"
+                className="px-2.5 py-1.5 rounded-lg border border-[#E7DFD4] bg-white hover:bg-[#F5F0E8] text-[11px] font-semibold text-[#30251F] transition"
               >
                 3. Calibrate DOWN (Look Down)
               </button>
               <button
                 type="button"
                 onClick={handleTestAlarm}
-                className="px-2.5 py-1.5 rounded-lg border border-amber-200 bg-amber-50 hover:bg-amber-100 text-[11px] font-semibold text-amber-800 transition"
+                className="px-2.5 py-1.5 rounded-lg border border-[#DFBA9C] bg-[#FBF3E8] hover:bg-[#F4DFC8] text-[11px] font-semibold text-[#8C4318] transition"
               >
                 Test Alarm LEDs
               </button>
@@ -954,10 +981,10 @@ export default function BleCommissioningModal({
         )}
 
         {/* Live Device Log & Gesture Counters (from nv-setup.html Section 4) */}
-        <div className="pt-2 border-t border-slate-100 space-y-2">
+        <div className="pt-2 border-t border-[#F2ECE3] space-y-2">
           <div className="flex items-center justify-between text-xs">
-            <span className="font-bold text-slate-700 flex items-center gap-1.5">
-              <Terminal className="w-3.5 h-3.5 text-slate-500" />
+            <span className="font-bold text-[#30251F] flex items-center gap-1.5">
+              <Terminal className="w-3.5 h-3.5 text-[#75665D]" />
               Live Device Messages &amp; BLE Notifications
             </span>
             {Object.keys(gestureCounts).length > 0 && (
@@ -970,15 +997,15 @@ export default function BleCommissioningModal({
               </div>
             )}
           </div>
-          <div className="bg-slate-900 text-slate-200 p-2.5 rounded-xl font-mono text-[11px] max-h-28 overflow-y-auto space-y-0.5 select-all">
+          <div className="bg-[#1C140F] text-[#E7DFD4] p-2.5 rounded-xl font-mono text-[11px] max-h-28 overflow-y-auto space-y-0.5 select-all">
             {logs.length === 0 ? (
-              <span className="text-slate-500 italic">No messages yet. Logs will appear here when connected over BLE.</span>
+              <span className="text-[#75665D]">No messages yet. Logs will appear here when connected over BLE.</span>
             ) : (
               logs.map((line, idx) => <div key={idx} className="leading-tight">{line}</div>)
             )}
           </div>
         </div>
-      </div>
-    </div>
+      </motion.div>
+    </motion.div>
   );
 }

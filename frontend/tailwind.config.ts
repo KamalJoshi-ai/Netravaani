@@ -25,8 +25,8 @@ export default {
         },
       },
       fontFamily: {
-        serif: ["var(--font-serif)", "Playfair Display", "Newsreader", "Georgia", "serif"],
-        sans: ["var(--font-geist-sans)", "sans-serif"],
+        serif: ["var(--font-inter)", "Inter", "system-ui", "sans-serif"],
+        sans: ["var(--font-inter)", "Inter", "system-ui", "-apple-system", "Segoe UI", "sans-serif"],
         mono: ["var(--font-geist-mono)", "monospace"],
       },
     },
