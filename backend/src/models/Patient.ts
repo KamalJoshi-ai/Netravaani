@@ -25,6 +25,8 @@ export interface INurseAssignment {
 export interface IPatient extends Document {
   patientCode: string;
   displayName: string;
+  email?: string;
+  userId?: string | Types.ObjectId;
   bedLabel?: string;
   status: PatientStatus;
   password?: string;
@@ -78,6 +80,15 @@ const PatientSchema = new Schema<IPatient>(
       type: String,
       required: true,
       trim: true,
+    },
+    email: {
+      type: String,
+      trim: true,
+      lowercase: true,
+      sparse: true,
+    },
+    userId: {
+      type: Schema.Types.Mixed,
     },
     bedLabel: {
       type: String,

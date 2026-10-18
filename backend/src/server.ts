@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { connectDatabase } from "./lib/db.js";
 import { startConnectivityWatchdog, stopConnectivityWatchdog } from "./services/deviceService.js";
+
 // NetraVaani Clinical Backend Server - v2.1.0 with Patient Bedside Auth
 async function bootstrap() {
   const app = createApp();

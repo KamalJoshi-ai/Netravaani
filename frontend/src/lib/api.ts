@@ -41,6 +41,7 @@ export interface DeviceItem {
   desiredConfigVersion?: number;
   appliedConfigVersion?: number;
   isDevRegistration: boolean;
+  registeredBy?: string;
   createdAt: string;
   updatedAt: string;
   currentAssignment?: {
@@ -272,11 +273,12 @@ class ApiClient {
   }
 
   // Devices
-  async getDevices(params?: { page?: number; limit?: number; status?: string }): Promise<ApiResponse<DeviceItem[]>> {
+  async getDevices(params?: { page?: number; limit?: number; status?: string; registeredBy?: string }): Promise<ApiResponse<DeviceItem[]>> {
     const searchParams = new URLSearchParams();
     if (params?.page) searchParams.set("page", params.page.toString());
     if (params?.limit) searchParams.set("limit", params.limit.toString());
     if (params?.status) searchParams.set("status", params.status);
+    if (params?.registeredBy) searchParams.set("registeredBy", params.registeredBy);
     const query = searchParams.toString() ? `?${searchParams.toString()}` : "";
     return this.request<ApiResponse<DeviceItem[]>>(`/devices${query}`);
   }
@@ -289,6 +291,7 @@ class ApiClient {
     name: string;
     hardwareId?: string;
     firmwareVersion?: string;
+    registeredBy?: string;
     isDevRegistration: true;
   }): Promise<ApiResponse<DeviceItem>> {
     return this.request<ApiResponse<DeviceItem>>("/devices", {
@@ -301,6 +304,7 @@ class ApiClient {
     hardwareId: string;
     name?: string;
     firmwareVersion?: string;
+    registeredBy?: string;
   }): Promise<ApiResponse<{ deviceId: string; hardwareId: string; token: string; name: string; status: string; registered: boolean; isNew: boolean }>> {
     return this.request<ApiResponse<{ deviceId: string; hardwareId: string; token: string; name: string; status: string; registered: boolean; isNew: boolean }>>("/devices/esp32/register", {
       method: "POST",
@@ -328,6 +332,7 @@ class ApiClient {
     name?: string;
     firmwareVersion?: string;
     ipAddress?: string;
+    registeredBy?: string;
   }): Promise<ApiResponse<WifiConnectResult>> {
     return this.request<ApiResponse<WifiConnectResult>>("/devices/wifi-connect", {
       method: "POST",
@@ -540,7 +545,7 @@ class ApiClient {
   }
 
   // Patient Methods & Bedside Authentication
-  async patientLogin(patientCode: string, password = "patient123"): Promise<ApiResponse<{ token: string; patient: PatientItem }>> {
+  async patientLogin(patientCode: string, password = ""): Promise<ApiResponse<{ token: string; patient: PatientItem }>> {
     return this.request<ApiResponse<{ token: string; patient: PatientItem }>>("/patients/login", {
       method: "POST",
       body: JSON.stringify({ patientCode, password }),
@@ -558,9 +563,23 @@ class ApiClient {
     });
   }
 
-  async approveNurseAssignment(patientCode: string): Promise<ApiResponse<PatientItem>> {
+  async allocateNurse(patientCode: string, nurseData: { nurseName: string; nurseId?: string; nurseRole?: string; bedLabel?: string }): Promise<ApiResponse<PatientItem>> {
+    return this.request<ApiResponse<PatientItem>>(`/patients/${patientCode}/allocate-nurse`, {
+      method: "POST",
+      body: JSON.stringify(nurseData),
+    });
+  }
+
+  async deallocateNurse(patientCode: string): Promise<ApiResponse<PatientItem>> {
+    return this.request<ApiResponse<PatientItem>>(`/patients/${patientCode}/deallocate-nurse`, {
+      method: "POST",
+    });
+  }
+
+  async approveNurseAssignment(patientCode: string, bedLabel?: string): Promise<ApiResponse<PatientItem>> {
     return this.request<ApiResponse<PatientItem>>(`/patients/${patientCode}/approve-nurse`, {
       method: "POST",
+      body: JSON.stringify({ bedLabel }),
     });
   }
 

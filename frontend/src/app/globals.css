@@ -1,46 +1,135 @@
-@import url("https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,200..800;1,6..72,200..800&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800;900&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;0,6..72,700;1,6..72,400&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #F5F0E8;
-  --foreground: #30251F;
+  --background: #F5F1E9;
+  --foreground: #211C19;
   --surface: #FFFCF7;
-  --accent: #C56845;
-  --soft-accent: #EED9CD;
-  --border: #E7DFD4;
-  --font-serif: "Newsreader", "Playfair Display", "Georgia", "Cambria", serif;
+  --border: #E5D9CA;
+  --terracotta: #AD5D3D;
+  --emergency: #B42318;
+  --success: #42765A;
+  --text-primary: #211C19;
+  --text-secondary: #76685F;
+  --font-heading: "Plus Jakarta Sans", sans-serif;
+  --font-sans: "Inter", sans-serif;
+  --font-serif: "Newsreader", Georgia, serif;
 }
 
 body {
-  color: var(--foreground);
-  background-color: var(--background);
+  color: #211C19;
+  background-color: #F5F1E9;
+  /* Rich, vivid, layered clinical dashboard background */
+  background-image: 
+    radial-gradient(circle at 15% 5%, rgba(173, 93, 61, 0.08) 0%, transparent 45%),
+    radial-gradient(circle at 88% 85%, rgba(66, 118, 90, 0.12) 0%, transparent 48%),
+    radial-gradient(circle at 85% 15%, rgba(43, 108, 176, 0.06) 0%, transparent 40%),
+    radial-gradient(circle at 20% 80%, rgba(66, 118, 90, 0.07) 0%, transparent 40%),
+    radial-gradient(#D5C9B8 0.95px, transparent 0.95px);
+  background-size: 100% 100%, 100% 100%, 100% 100%, 100% 100%, 22px 22px;
+  background-attachment: fixed;
   min-height: 100vh;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.011em;
+  font-family: var(--font-sans);
+  font-weight: 450;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Headings with Plus Jakarta Sans */
+h1, h2, h3, h4, h5, h6, .font-heading {
+  font-family: var(--font-heading);
+  color: #211C19;
+  letter-spacing: -0.025em;
+  font-weight: 700;
+}
+
+/* Wordmark with restrained serif accent */
+.font-wordmark {
+  font-family: var(--font-serif);
+}
+
+label {
+  color: #4A4039;
+  font-weight: 600;
+  font-family: var(--font-sans);
+}
+
+input, select, textarea {
+  color: #211C19;
+  background-color: #FFFCF7;
+  border-color: #E5D9CA;
+  font-weight: 500;
 }
 
 ::selection {
-  background-color: #EED9CD;
-  color: #30251F;
+  background-color: rgba(66, 118, 90, 0.22);
+  color: #211C19;
 }
 
-/* Custom Editorial Scrollbar */
+/* Vivid Clinical Card Accents & Animations */
+.card-clinical-green {
+  background: linear-gradient(135deg, #FFFCF7 0%, #F5FBF7 100%);
+  border: 1px solid #CDE2D5;
+  box-shadow: 0 2px 8px -2px rgba(66, 118, 90, 0.08), 0 1px 3px 0 rgba(33, 28, 25, 0.03);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.card-clinical-green:hover {
+  transform: translateY(-2px);
+  border-color: #42765A;
+  box-shadow: 0 10px 24px -4px rgba(66, 118, 90, 0.16), 0 2px 6px -1px rgba(66, 118, 90, 0.08);
+}
+
+.card-clinical-warm {
+  background: linear-gradient(135deg, #FFFCF7 0%, #FAF5F0 100%);
+  border: 1px solid #EAD8CC;
+  box-shadow: 0 2px 8px -2px rgba(173, 93, 61, 0.08), 0 1px 3px 0 rgba(33, 28, 25, 0.03);
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.card-clinical-warm:hover {
+  transform: translateY(-2px);
+  border-color: #AD5D3D;
+  box-shadow: 0 10px 24px -4px rgba(173, 93, 61, 0.16), 0 2px 6px -1px rgba(173, 93, 61, 0.08);
+}
+
+/* Pulsing Live Telemetry Glow */
+@keyframes pulse-subtle {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(66, 118, 90, 0.4);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.04);
+    box-shadow: 0 0 0 6px rgba(66, 118, 90, 0);
+  }
+}
+
+.animate-pulse-subtle {
+  animation: pulse-subtle 2.2s infinite cubic-bezier(0.4, 0, 0.6, 1);
+}
+
+/* Clinical Scrollbar */
 ::-webkit-scrollbar {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #F5F0E8;
+  background: #F5F1E9;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #D8CDC0;
+  background: #C8DEC9;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #C56845;
+  background: #42765A;
 }

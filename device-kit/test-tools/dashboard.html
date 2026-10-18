@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetraVaani mock nurse dashboard</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 980px; margin: 28px auto; padding: 0 16px; color: #111827; }
+  h1 { font-size: 22px; margin: 0 0 4px; } p.sub { color: #4b5563; margin: 0 0 20px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+  th, td { text-align: left; padding: 7px 8px; border-bottom: 1px solid #e5e7eb; font-size: 14px; }
+  th { color: #4b5563; font-weight: 600; }
+  .NEW { color: #dc2626; font-weight: 700; } .ACKNOWLEDGED { color: #b45309; font-weight: 600; } .RESOLVED { color: #15803d; }
+  button { padding: 4px 10px; border-radius: 6px; border: 1px solid #111827; background: #fff; cursor: pointer; margin-right: 6px; }
+  pre { background: #f3f4f6; padding: 10px; border-radius: 6px; max-height: 260px; overflow: auto; font-size: 12.5px; }
+</style>
+</head>
+<body>
+<h1>NetraVaani mock nurse dashboard</h1>
+<p class="sub">For hardware testing only. Edit <code>config.json</code> (and raise its version) to push a new gesture mapping to the device. <a href="/setup">Device setup page</a></p>
+<h2>Devices</h2>
+<table><thead><tr><th>Device</th><th>Last seen</th><th>Battery</th><th>Signal</th><th>Config applied / desired</th><th>Alarm</th></tr></thead><tbody id="devices"></tbody></table>
+<h2>Requests</h2>
+<table><thead><tr><th>#</th><th>Action</th><th>Device</th><th>Gesture</th><th>Urgent</th><th>Received</th><th>Status</th><th></th></tr></thead><tbody id="requests"></tbody></table>
+<h2>Log</h2>
+<pre id="log"></pre>
+<script>
+let lastNew = 0;
+async function act(id, what) { await fetch(`/api/requests/${id}/${what}`, { method: 'POST' }); refresh(); }
+async function refresh() {
+  const s = await (await fetch('/api/state')).json();
+  document.getElementById('devices').innerHTML = Object.entries(s.devices).map(([id, d]) => {
+    const st = d.status || {}, ch = st.channels || {};
+    const ago = d.lastSeen ? Math.round((Date.now() - d.lastSeen) / 1000) + ' s ago' : 'never';
+    return `<tr><td>${id}</td><td>${ago}</td><td>${st.battery ?? '-'}%</td><td>${ch.ch1 || '-'} / ${ch.ch2 || '-'} / ${ch.ch3 || '-'}</td>
+      <td>${d.appliedVersion} / ${s.config.version}</td><td>${st.alarmActive ? 'SOUNDING' : 'off'}</td></tr>`;
+  }).join('');
+  document.getElementById('requests').innerHTML = s.requests.map(r => `<tr><td>${r.id}</td><td>${r.action}</td><td>${r.deviceId}</td>
+    <td>${r.gesture || r.gestureId}</td><td>${r.urgent ? '⚠️ URGENT' : ''}</td><td>${new Date(r.receivedAt).toLocaleTimeString()}</td><td class="${r.status}">${r.status}</td>
+    <td>${r.status === 'NEW' ? `<button onclick="act(${r.id},'acknowledge')">Acknowledge</button>` : ''}
+        ${r.status !== 'RESOLVED' ? `<button onclick="act(${r.id},'resolve')">Resolve</button>` : ''}</td></tr>`).join('');
+  document.getElementById('log').textContent = s.log.join('\n');
+  const newest = s.requests.filter(r => r.status === 'NEW').length;
+  if (newest > lastNew) { try { new AudioContext().resume(); } catch {} document.title = '(!) NetraVaani'; }
+  else if (!newest) document.title = 'NetraVaani mock nurse dashboard';
+  lastNew = newest;
+}
+refresh(); setInterval(refresh, 1500);
+</script>
+</body>
+</html>

@@ -1,21 +1,10 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
-
 export const metadata: Metadata = {
-  title: "NetraVaani — Assistive Communication System",
-  description: "Bedside gesture configuration and patient assistive communication",
+  title: "NetraVaani",
+  description: "Assistive Gaze & Gesture Clinical Platform",
 };
 
 export default function RootLayout({
@@ -25,9 +14,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-[#F5F0E8] text-[#30251F]`}
-      >
+      <body className="bg-[#F5F1E9] text-[#211C19] font-sans antialiased selection:bg-[#AD5D3D]/20 selection:text-[#211C19] min-h-screen">
         <AuthProvider>{children}</AuthProvider>
       </body>
     </html>

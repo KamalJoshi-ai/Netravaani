@@ -249,9 +249,22 @@ export class CareRequestService {
     }
 
     if (query.patientCode) {
-      const pt = await Patient.findOne({ patientCode: query.patientCode });
+      const trimmed = query.patientCode.trim();
+      const pt = await Patient.findOne({
+        $or: [
+          { patientCode: trimmed },
+          { patientCode: trimmed.toUpperCase() },
+          { email: trimmed.toLowerCase() },
+        ],
+      });
       if (pt) {
-        filter.patient = pt._id;
+        const assignments = await DeviceAssignment.find({ patient: pt._id });
+        const deviceIds = assignments.map((a) => a.device);
+        if (deviceIds.length > 0) {
+          filter.$or = [{ patient: pt._id }, { device: { $in: deviceIds } }];
+        } else {
+          filter.patient = pt._id;
+        }
       } else {
         return { items: [], total: 0, page, limit, totalPages: 0 };
       }

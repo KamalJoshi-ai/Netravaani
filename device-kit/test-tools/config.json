@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "tuning": {
+    "emgK": 8, "emgRatio": 4, "emgMinAbs": 30,
+    "squeezeMinMs": 100, "squeezeMaxMs": 1500, "releaseMs": 80, "squeezeRefractoryMs": 150,
+    "mainsHz": 50,
+    "blinkK": 6, "blinkMinAbs": 120, "hysteresis": 0.5,
+    "blinkMinMs": 40, "blinkMaxMs": 400, "blinkRefractoryMs": 120,
+    "dirK": 8, "dirMinAbs": 150, "dirMinMs": 1000, "upSign": 0, "gazeMode": -1, "downRatio": 1.6,
+    "blinkGroupEndMs": 1000, "compoundWaitMs": 2000, "restWindowMs": 2500,
+    "squeezeGroupEndMs": 1000, "maxSequenceMs": 15000, "commandCooldownMs": 1500, "countCap": 12
+  }
+}

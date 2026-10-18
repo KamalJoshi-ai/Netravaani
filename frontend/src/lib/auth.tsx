@@ -10,6 +10,7 @@ export interface AuthUser {
   email?: string;
   username?: string;
   role: string;
+  patientCode?: string;
   isVerified?: boolean;
   profilePicture?: string;
 }
@@ -41,15 +42,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const res = await apiClient.getCurrentUser();
       if (res.status === "success" && res.data) {
         const u = res.data.user || res.data;
+        const patientCode = u.patientCode || (typeof window !== "undefined" ? localStorage.getItem("nv_patient_code") : undefined);
         setUser({
           id: u.id || u._id,
           name: u.name,
           email: u.email,
           username: u.username || u.email,
           role: u.role,
+          patientCode,
           isVerified: u.isVerified,
           profilePicture: u.profilePicture,
         });
+        if (patientCode && typeof window !== "undefined") {
+          localStorage.setItem("nv_patient_code", patientCode);
+        }
       } else {
         setUser(null);
       }
@@ -68,15 +74,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const res = await apiClient.login(identifier, password);
     if (res.status === "success" && res.data) {
       const u = res.data.user || res.data;
+      const patientCode = u.patientCode || (u.role === "patient" ? (typeof window !== "undefined" ? localStorage.getItem("nv_patient_code") : undefined) : undefined);
       setUser({
         id: u.id || u._id,
         name: u.name,
         email: u.email,
         username: u.username || u.email,
         role: u.role,
+        patientCode,
         isVerified: u.isVerified,
         profilePicture: u.profilePicture,
       });
+      if (patientCode && typeof window !== "undefined") {
+        localStorage.setItem("nv_patient_code", patientCode);
+      }
       return res;
     }
     return res;
@@ -89,7 +100,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const logout = async () => {
     try {
       await apiClient.logout();
+    } catch (e) {
+      console.warn("Logout request error:", e);
     } finally {
+      if (typeof window !== "undefined") {
+        localStorage.removeItem("nv_patient_code");
+        localStorage.removeItem("netravaani_token");
+        localStorage.removeItem("access_token");
+        // Expire client cookies
+        document.cookie = "access_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        document.cookie = "netravaani_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+        document.cookie = "patient_token=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+      }
       setUser(null);
     }
   };

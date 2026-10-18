@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NetraVaani device setup</title>
+<style>
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 760px; margin: 32px auto; padding: 0 16px; color: #111827; }
+  h1 { font-size: 24px; margin: 0 0 4px; } p.sub { color: #4b5563; margin: 0 0 24px; }
+  section { border: 1px solid #d1d5db; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 16px; margin: 0 0 10px; }
+  label { display: block; font-size: 13px; color: #374151; margin: 8px 0 2px; }
+  input { width: 100%; box-sizing: border-box; padding: 8px; border: 1px solid #9ca3af; border-radius: 6px; font: inherit; }
+  button { padding: 8px 14px; border-radius: 6px; border: 1px solid #111827; background: #111827; color: #fff; font: inherit; cursor: pointer; margin: 10px 8px 0 0; }
+  button.secondary { background: #fff; color: #111827; }
+  button:disabled { opacity: .4; cursor: default; }
+  pre { background: #f3f4f6; padding: 10px; border-radius: 6px; white-space: pre-wrap; word-break: break-word; font-size: 13px; }
+  #log { max-height: 260px; overflow: auto; }
+  .counts span { display: inline-block; margin-right: 14px; }
+</style>
+</head>
+<body>
+<h1>NetraVaani device setup</h1>
+<p class="sub">Chrome or Edge only. A board that is not set up yet always accepts setup. A board that is already set up accepts new settings for 5 minutes after you press its RESET button. Use “Recalibrate” once the board is on the patient and still, then “Calibrate UP” / “Calibrate DOWN” while they look up / down and hold.</p>
+
+<section>
+  <h2>1. Connect over Bluetooth</h2>
+  <button id="connect">Connect NPG Lite</button>
+  <button id="refresh" class="secondary" disabled>Read identity</button>
+  <pre id="identity">Not connected</pre>
+</section>
+
+<section>
+  <h2>2. Register with the backend</h2>
+  <label>Backend URL the device will use (your laptop's Wi-Fi IP, not localhost)</label>
+  <input id="api" placeholder="http://192.168.1.20:4000">
+  <button id="register" disabled>Register device</button>
+  <label>Device ID</label><input id="deviceId">
+  <label>Device token</label><input id="token">
+</section>
+
+<section>
+  <h2>3. Wi-Fi and send to device</h2>
+  <label>Wi-Fi name (2.4 GHz)</label><input id="ssid">
+  <label>Wi-Fi password</label><input id="password" type="password">
+  <button id="provision" disabled>Send settings to device</button>
+  <button id="test" class="secondary" disabled>Test alarm</button>
+</section>
+
+<section>
+  <h2>4. Eye calibration (per patient)</h2>
+  <p style="font-size:13px;color:#4b5563;margin:0 0 6px">Do this with the electrodes on and the patient relaxed. Step 1 first; steps 2-3 need the patient to cooperate.</p>
+  <button id="calRest" disabled>1. Recalibrate (patient relaxed, keep still 4.5s)</button>
+  <button id="calUp" class="secondary" disabled>2. Calibrate UP (patient looks up now)</button>
+  <button id="calDown" class="secondary" disabled>3. Calibrate DOWN (patient looks down now)</button>
+</section>
+
+<section>
+  <h2>4. Live device messages (use this while calibrating)</h2>
+  <div class="counts" id="counts"></div>
+  <pre id="log"></pre>
+</section>
+
+<script>
+const NV_SERVICE = 'a7c10001-5e4b-4d2a-9c1e-3f6e7a2b9d01';
+const NV_IDENTITY = 'a7c10002-5e4b-4d2a-9c1e-3f6e7a2b9d01';
+const NV_PROVISION = 'a7c10003-5e4b-4d2a-9c1e-3f6e7a2b9d01';
+const NV_STATUS = 'a7c10004-5e4b-4d2a-9c1e-3f6e7a2b9d01';
+const $ = (id) => document.getElementById(id);
+let identityChar, provisionChar, identity = null;
+const counts = {};
+
+function logLine(t) { $('log').textContent = new Date().toLocaleTimeString() + '  ' + t + '\n' + $('log').textContent; }
+
+fetch('/api/info').then(r => r.json()).then(i => {
+  if (i.lanIps && i.lanIps.length && !$('api').value) $('api').value = `http://${i.lanIps[0]}:${i.port}`;
+}).catch(() => {});
+
+async function readIdentity() {
+  const v = await identityChar.readValue();
+  identity = JSON.parse(new TextDecoder().decode(v));
+  $('identity').textContent = JSON.stringify(identity, null, 2);
+  if (identity.deviceId) $('deviceId').value = identity.deviceId;
+}
+
+$('connect').onclick = async () => {
+  try {
+    const dev = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: 'NPG' }], optionalServices: [NV_SERVICE] });
+    dev.addEventListener('gattserverdisconnected', () => { logLine('disconnected'); ['refresh','register','provision','test','calRest','calUp','calDown'].forEach(b => $(b).disabled = true); });
+    const server = await dev.gatt.connect();
+    const svc = await server.getPrimaryService(NV_SERVICE);
+    identityChar = await svc.getCharacteristic(NV_IDENTITY);
+    provisionChar = await svc.getCharacteristic(NV_PROVISION);
+    const status = await svc.getCharacteristic(NV_STATUS);
+    status.addEventListener('characteristicvaluechanged', (e) => {
+      const text = new TextDecoder().decode(e.target.value);
+      logLine(text);
+      try {
+        const m = JSON.parse(text);
+        if (m.type === 'gesture') {
+          counts[m.name] = (counts[m.name] || 0) + 1;
+          $('counts').innerHTML = Object.entries(counts).map(([k, v]) => `<span><b>${k}</b>: ${v}</span>`).join('');
+        }
+      } catch {}
+    });
+    await status.startNotifications();
+    await readIdentity();
+    ['refresh','register','provision','test','calRest','calUp','calDown'].forEach(b => $(b).disabled = false);
+    logLine('connected to ' + dev.name);
+  } catch (err) { logLine('connect failed: ' + err.message); }
+};
+
+$('refresh').onclick = readIdentity;
+
+$('register').onclick = async () => {
+  try {
+    const r = await fetch('/api/devices/register', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ hardwareId: identity.hardwareId }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    $('deviceId').value = j.deviceId; $('token').value = j.token;
+    logLine('registered as ' + j.deviceId);
+  } catch (err) { logLine('register failed: ' + err.message); }
+};
+
+async function sendCmd(obj) {
+  await provisionChar.writeValueWithResponse(new TextEncoder().encode(JSON.stringify(obj)));
+}
+
+$('provision').onclick = async () => {
+  const cmd = { cmd: 'provision', ssid: $('ssid').value, password: $('password').value,
+                api: $('api').value.trim(), deviceId: $('deviceId').value.trim(), token: $('token').value.trim() };
+  try { await sendCmd(cmd); logLine('settings sent, watch the device reply below'); setTimeout(readIdentity, 8000); }
+  catch (err) { logLine('send failed: ' + err.message); }
+};
+$('test').onclick = () => sendCmd({ cmd: 'test_alarm' }).catch(e => logLine(e.message));
+$('calRest').onclick = () => sendCmd({ cmd: 'cal_rest' }).catch(e => logLine(e.message));
+$('calUp').onclick = () => sendCmd({ cmd: 'cal_up' }).catch(e => logLine(e.message));
+$('calDown').onclick = () => sendCmd({ cmd: 'cal_down' }).catch(e => logLine(e.message));
+</script>
+</body>
+</html>

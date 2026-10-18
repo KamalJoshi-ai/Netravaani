@@ -1,0 +1,2 @@
+3592298e0736815bb08b70866ab84a5668b87d47f1c1fedf49ae8e2017951c3c  NetraVaani-Device-nv-1.1.1-ESP32C6.merged.bin
+af440cc849729390d33f81e571e7ddcc4dd583e3e7b59a54cdbf3822ce5db73d  NetraVaani-Device-nv-1.1.1.elf

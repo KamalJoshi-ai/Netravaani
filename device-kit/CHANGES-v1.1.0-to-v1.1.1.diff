@@ -1,0 +1,222 @@
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -66,7 +66,7 @@
+ 
+     // ---- BOOT button (read only) ----
+     bool pressed = digitalRead(PIN_BOOT_BTN) == LOW;
+-    if (pressed && !btnDown) { btnDown = true; btnSince = now; longFired = false; }
++    if (pressed && !btnDown) { btnDown = true; btnSince = now; longFired = false; NVLOG("[ui] BOOT pressed\n"); }
+     if (pressed && btnDown && !longFired && now - btnSince >= 3000) {
+       longFired = true;
+       gProvisionUntil = now + PROVISION_WINDOW_MS;
+@@ -74,6 +74,7 @@
+     }
+     if (!pressed && btnDown) {
+       btnDown = false;
++      NVLOG("[ui] BOOT released after %lu ms\n", (unsigned long)(now - btnSince));
+       if (!longFired && now - btnSince >= 30 && sAlarm) {
+         nvAlarmStop();
+         nvOnLocalSilence();
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -6,7 +6,7 @@
+ //  Board: Upside Down Labs NPG Lite (ESP32-C6) on the Proto Playmate
+ // ============================================================================
+ 
+-#define NV_FW_VERSION "nv-1.1.0"
++#define NV_FW_VERSION "nv-1.1.1"
+ 
+ // ---- Pins: only parts that are physically ON the NPG Lite board ----
+ // Confirmed from Upside Down Labs' docs and official firmware:
+@@ -52,7 +52,8 @@
+ #define HEARTBEAT_MS 30000          // normal heartbeat
+ #define HEARTBEAT_ALARM_MS 3000     // faster heartbeat while alarm sounds (to receive "silence")
+ #define CONFIG_POLL_MS 60000        // re-check configuration even without a hint
+-#define PROVISION_WINDOW_MS 180000  // BLE setup window: 3 minutes
++#define PROVISION_WINDOW_MS 300000  // BLE setup window after every restart / BOOT hold: 5 minutes
++// A board that is not set up yet keeps the setup window open with no time limit.
+ #define HTTP_TIMEOUT_MS 6000
+ #define EVENT_QUEUE_LEN 16          // bounded offline queue (RAM)
+ #define EVENT_MAX_AGE_MS 1800000UL  // drop undelivered events older than 30 min
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -140,8 +140,13 @@
+   if (deserializeJson(d, raw)) { nvBleReply(false, "invalid JSON"); return; }
+   String cmd = d["cmd"] | "";
+ 
++  NVLOG("[setup] received command \"%s\"\n", cmd.c_str());
+   if (cmd == "identity") { nvBleNotifyStatus(identityJson()); return; }
+-  if (!nvProvisionOpen()) { nvBleReply(false, "setup window closed: hold BOOT for 3 s"); return; }
++  if (!nvProvisionOpen()) {
++    NVLOG("[setup] rejected: setup window closed (press RESET, or hold BOOT 3 s)\n");
++    nvBleReply(false, "setup window closed: press RESET (or hold BOOT 3 s) and send again");
++    return;
++  }
+ 
+   if (cmd == "provision" || cmd == "wifi") {
+     NvSettings s = nvGetSettings();
+@@ -154,15 +159,18 @@
+       s.apiBase.trim();
+       while (s.apiBase.endsWith("/")) s.apiBase.remove(s.apiBase.length() - 1);
+       if (!(s.apiBase.startsWith("http://") || s.apiBase.startsWith("https://"))) {
++        NVLOG("[setup] rejected: backend URL must start with http:// or https://\n");
+         nvBleReply(false, "api must start with http:// or https://");
+         return;
+       }
+       if (s.deviceId.length() < 3 || s.deviceId.length() > 40 || s.token.length() < 16 || s.token.length() > 200) {
+-        nvBleReply(false, "deviceId or token has invalid length");
++        NVLOG("[setup] rejected: deviceId/token missing or wrong length (click Register first)\n");
++        nvBleReply(false, "deviceId or token missing: click Register device first");
+         return;
+       }
+     }
+     if (s.ssid.length() == 0 || s.ssid.length() > 32 || s.pass.length() > 64) {
++      NVLOG("[setup] rejected: Wi-Fi name empty or too long\n");
+       nvBleReply(false, "invalid Wi-Fi credentials");
+       return;
+     }
+@@ -170,6 +178,7 @@
+     nvLock();
+     gSettings = s;
+     nvUnlock();
++    gProvisioned = s.provisioned();
+     gSettingsChanged = true;
+     NVLOG("[setup] saved settings for %s, Wi-Fi \"%s\", backend %s\n", s.deviceId.c_str(), s.ssid.c_str(), s.apiBase.c_str());
+ #if NV_ENABLE_WIFI
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -37,11 +37,17 @@
+   NvConfig cfg;
+   nvLoadStoredConfig(cfg);
+   nvSetConfig(cfg);
+-  if (!gSettings.provisioned() || gSafeMode) gProvisionUntil = millis() + PROVISION_WINDOW_MS;
++  gProvisioned = gSettings.provisioned();
++  gProvisionUntil = millis() + PROVISION_WINDOW_MS;  // setup is allowed for 5 min after every restart
+ 
+   NVLOG("[boot] %s | boot %lu | device %s | config v%d | %s\n", gHardwareId, (unsigned long)gBootId,
+         gSettings.deviceId.length() ? gSettings.deviceId.c_str() : "(not registered)", (int)cfg.version,
+-        gSettings.provisioned() ? "provisioned" : "setup window open (BLE)");
++        gSettings.provisioned() ? "provisioned" : "NOT SET UP");
++  if (gProvisioned)
++    NVLOG("[boot] Wi-Fi \"%s\", backend %s | setup window open for %d s\n", gSettings.ssid.c_str(),
++          gSettings.apiBase.c_str(), PROVISION_WINDOW_MS / 1000);
++  else
++    NVLOG("[boot] setup window OPEN until the board is set up (use the setup page)\n");
+ 
+   nvAlarmBegin();   // BOOT button + on-board LEDs (no buzzer)
+   nvEventsBegin();  // events task must exist before anything can post to it
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -223,6 +223,38 @@
+ 
+ // ---------------- Wi-Fi ----------------
+ static uint32_t sWifiRetryAt = 0, sWifiBackoff = 5000;
++static volatile uint8_t sLastDiscReason = 0;
++static bool sScanned = false;
++
++// Logs WHY the connection failed (wrong password, network not found, ...)
++static void onWifiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
++  if (event != ARDUINO_EVENT_WIFI_STA_DISCONNECTED) return;
++  uint8_t r = info.wifi_sta_disconnected.reason;
++  if (r == sLastDiscReason) return;  // do not repeat the same reason on every retry
++  sLastDiscReason = r;
++  NVLOG("[wifi] disconnected, reason %u: %s\n", r, WiFi.disconnectReasonName((wifi_err_reason_t)r));
++  if (r == WIFI_REASON_NO_AP_FOUND)
++    NVLOG("[wifi] -> network name not found. It must match exactly (capitals, spaces, apostrophes) and be 2.4 GHz.\n");
++  else if (r == WIFI_REASON_AUTH_FAIL || r == WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT || r == WIFI_REASON_HANDSHAKE_TIMEOUT)
++    NVLOG("[wifi] -> wrong Wi-Fi password.\n");
++}
++
++// After the first failure, list the 2.4 GHz networks the board can actually see.
++static void scanAndReport() {
++  NVLOG("[wifi] scanning for networks...\n");
++  int n = WiFi.scanNetworks(false, true);
++  bool found = false;
++  if (n <= 0) NVLOG("[wifi] no networks visible (hotspot off, or 5 GHz only?)\n");
++  for (int i = 0; i < n && i < 15; i++) {
++    String s = WiFi.SSID(i);
++    bool match = s == sNet.ssid;
++    found |= match;
++    NVLOG("[wifi]   \"%s\"  ch %d  %d dBm%s\n", s.c_str(), (int)WiFi.channel(i), (int)WiFi.RSSI(i), match ? "  <- your network" : "");
++  }
++  if (n > 0 && !found)
++    NVLOG("[wifi] \"%s\" is NOT in this list. Fix the name on the setup page (copy it exactly from above).\n", sNet.ssid.c_str());
++  WiFi.scanDelete();
++}
+ 
+ static bool ensureWifi() {
+   if (WiFi.status() == WL_CONNECTED) {
+@@ -235,12 +267,19 @@
+   gWifiUp = false;
+   gBackendOk = false;
+   if ((int32_t)(millis() - sWifiRetryAt) < 0) return false;
+-  NVLOG("[wifi] connecting to %s\n", sNet.ssid.c_str());
++  NVLOG("[wifi] connecting to \"%s\"\n", sNet.ssid.c_str());
+   WiFi.disconnect();
++  vTaskDelay(pdMS_TO_TICKS(200));
+   WiFi.begin(sNet.ssid.c_str(), sNet.pass.c_str());
+   uint32_t start = millis();
+   while (WiFi.status() != WL_CONNECTED && millis() - start < 15000) vTaskDelay(pdMS_TO_TICKS(250));
+   if (WiFi.status() == WL_CONNECTED) return ensureWifi();
++  if (!sScanned) {
++    sScanned = true;
++    WiFi.disconnect();
++    vTaskDelay(pdMS_TO_TICKS(200));
++    scanAndReport();
++  }
+   sWifiRetryAt = millis() + sWifiBackoff;
+   sWifiBackoff = min<uint32_t>(sWifiBackoff * 2, 60000);
+   NVLOG("[wifi] failed, retry in %lu s\n", (unsigned long)(sWifiBackoff / 2000));
+@@ -249,7 +288,8 @@
+ 
+ static void netTask(void *) {
+   WiFi.mode(WIFI_STA);
+-  WiFi.setAutoReconnect(true);
++  WiFi.setAutoReconnect(false);  // this task handles reconnects (avoids "sta is connecting" errors)
++  WiFi.onEvent(onWifiEvent);
+   sNet = nvGetSettings();
+   for (;;) {
+     if (gSettingsChanged) {
+@@ -261,6 +301,8 @@
+       sWifiBackoff = 5000;
+       sLastHeartbeat = 0;
+       sLastConfigPoll = 0;
++      sScanned = false;
++      sLastDiscReason = 0;
+       NVLOG("[net] new settings for %s\n", sNet.deviceId.c_str());
+     }
+     if (!sNet.provisioned()) { vTaskDelay(pdMS_TO_TICKS(500)); continue; }
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -2,6 +2,7 @@
+ 
+ NvSettings gSettings;
+ volatile bool gSettingsChanged = false;
++volatile bool gProvisioned = false;
+ volatile uint32_t gProvisionUntil = 0;
+ uint32_t gBootId = 0;
+ char gHardwareId[24] = { 0 };
+@@ -49,5 +50,6 @@
+   return s;
+ }
+ bool nvProvisionOpen() {
++  if (!gProvisioned) return true;  // not set up yet: always accept setup
+   return gProvisionUntil != 0 && (int32_t)(gProvisionUntil - millis()) > 0;
+ }
+diff -ruN --label v1.1.0 --label v1.1.1 v1.1.0 v1.1.1
+--- v1.1.0
++++ v1.1.1
+@@ -8,6 +8,7 @@
+ // Shared state between tasks (ADC/detection, network, BLE, alarm/UI)
+ extern NvSettings gSettings;            // guarded by nvLock()
+ extern volatile bool gSettingsChanged;  // BLE wrote new settings
++extern volatile bool gProvisioned;      // settings complete (Wi-Fi + backend + device id + token)
+ extern volatile uint32_t gProvisionUntil;
+ extern uint32_t gBootId;
+ extern char gHardwareId[24];

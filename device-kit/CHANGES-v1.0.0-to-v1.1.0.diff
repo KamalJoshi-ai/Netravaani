@@ -1,0 +1,1101 @@
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,76 +1,26 @@
+ /*
+-  NetraVaani device firmware for Upside Down Labs NPG Lite (ESP32-C6) + Proto Playmate
++  NetraVaani device firmware nv-1.1.0
++  Upside Down Labs NPG Lite (ESP32-C6) on the Proto Playmate. No external parts.
+ 
+   What it does
+-    - Samples CH1 (EOG-H), CH2 (EOG-V), CH3 (EMG) at 500 Hz, always, on the device
++    - Samples CH1 (EOG-H), CH2 (EOG-V), CH3 (EMG) at 500 Hz on the device
+     - Detects gestures locally: G01 triple clench, G02 double clench,
+       G03 double blink, G04 long clench
+     - Maps gestures to actions using the versioned configuration from the backend
+-    - Sends compact JSON events over Wi-Fi to the backend (no raw waveforms)
+-    - Retries with the same eventId, bounded offline queue, heartbeat, config versioning
+-    - Local alarm (buzzer on GPIO 8 + red LEDs) for universal help; works offline
+-    - Bluetooth LE for commissioning (identity + Wi-Fi/backend setup) and
+-      optional Chords-compatible raw streaming for calibration
++    - Sends compact JSON events over Wi-Fi (retries with the same eventId,
++      bounded offline queue, heartbeat, config versioning)
++    - Local alarm for universal help: software-only in this version
++      (serial log, BLE notification, heartbeat flag, on-board RGB LEDs)
++    - Bluetooth LE commissioning + Chords-compatible calibration stream
++    - Boot diagnostics: reset reason, previous crash from the flash core dump,
++      periodic heap/stack report, crash-loop safe mode
+ 
+   Signal acquisition setup follows Upside Down Labs' open-source NPG Lite
+   firmware (GPL-3.0); this firmware is released under GPL-3.0 as well.
+ 
+-  Arduino IDE settings
+-    Board: ESP32C6 Dev Module      (esp32 by Espressif, version 3.2.0)
+-    USB CDC On Boot: Enabled
+-    Partition Scheme: Huge APP (3MB No OTA/1MB SPIFFS)
+-    Libraries: Adafruit NeoPixel, ArduinoJson (v7)
++  Build: see README "Build and flash". Board ESP32C6 Dev Module, Arduino-ESP32 3.2.0,
++  USB CDC On Boot: Enabled, Partition Scheme: Huge APP (3MB No OTA/1MB SPIFFS).
+ */
+-#include <Arduino.h>
+-#include <ArduinoJson.h>
+-#include "esp_mac.h"
+-#include "nv_config.h"
+-#include "nv_types.h"
+-#include "nv_state.h"
+-#include "nv_storage.h"
+-#include "nv_alarm.h"
+-#include "nv_ble.h"
+-#include "nv_signal.h"
+-#include "nv_detect.h"
+-#include "nv_net.h"
+ 
+-// ---------- setup ----------
+-
+-void setup() {
+-  Serial.begin(115200);
+-  delay(300);
+-
+-  nvStateBegin();
+-  nvStorageBegin();
+-  gBootId = nvNextBootId();
+-
+-  uint8_t mac[6];
+-  esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
+-  snprintf(gHardwareId, sizeof(gHardwareId), "NPGLITE-%02X%02X%02X%02X%02X%02X",
+-           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+-
+-  gSettings = nvLoadSettings();
+-  NvConfig cfg;
+-  nvLoadStoredConfig(cfg);
+-  nvSetConfig(cfg);
+-
+-  if (!gSettings.provisioned()) gProvisionUntil = millis() + PROVISION_WINDOW_MS;
+-
+-  NVLOG("\n=== NetraVaani %s | %s | boot %lu ===\n", NV_FW_VERSION, gHardwareId, (unsigned long)gBootId);
+-  NVLOG("device: %s | config v%d | %s\n",
+-        gSettings.deviceId.length() ? gSettings.deviceId.c_str() : "(not registered)",
+-        (int)cfg.version, gSettings.provisioned() ? "provisioned" : "setup window open (BLE)");
+-
+-  nvAlarmBegin();
+-
+-  char bleName[32];
+-  snprintf(bleName, sizeof(bleName), "NPG-Lite-3CH:%02X:%02X", mac[4], mac[5]);
+-  nvBleBegin(bleName);
+-
+-  nvSignalBegin();
+-  nvNetBegin();
+-}
+-
+-void loop() {
+-  vTaskDelay(pdMS_TO_TICKS(1000));  // everything runs in FreeRTOS tasks
+-}
++// This file intentionally contains no code. The firmware entry points
++// setup() and loop() are in nv_main.cpp (see the note there).
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,88 +1,104 @@
+-// Local alarm (buzzer + LEDs), BOOT button and status LEDs.
++// Local alarm state, BOOT button and status indication.
+ // This path never depends on Wi-Fi, the backend or Bluetooth.
+ //
+-// LED meaning:
+-//   pixel 0  network: red = not set up / no Wi-Fi, amber = Wi-Fi but backend
+-//            unreachable, purple = backend rejected the device token,
+-//            green = connected; blinks blue while the setup window is open
+-//   pixels 1-4  flash red while the alarm sounds
+-//   pixel 5  battery: green > 70 %, amber 20-70 %, red < 20 %
+-//
+-// BOOT button: short press = silence alarm, hold 3 s = open setup window
+-#include <Adafruit_NeoPixel.h>
++// Only on-board hardware is touched:
++//   GPIO 9  BOOT/USER button (input):  short press = silence alarm,
++//                                      hold 3 s   = open setup window
++//   GPIO 15 on-board RGB LEDs (if NV_ONBOARD_PIXELS):
++//     pixel 0   network: red = not set up / no Wi-Fi, amber = backend unreachable,
++//               purple = token rejected, green = connected,
++//               blinking blue = setup window open, blinking magenta = SAFE MODE
++//     pixels 1-4  flash red while the alarm is active
++//     pixel 5   battery: green > 70 %, amber 20-70 %, red < 20 %
++// No buzzer output in this version. GPIO 7 and GPIO 8 are never touched.
+ #include "nv_config.h"
+ #include "nv_state.h"
+ #include "nv_alarm.h"
+-
++#if NV_ONBOARD_PIXELS
++#include <Adafruit_NeoPixel.h>
+ static Adafruit_NeoPixel sPix(PIXEL_COUNT, PIN_PIXELS, NEO_GRB + NEO_KHZ800);
++#endif
++
+ static volatile bool sAlarm = false;
++static volatile bool sAlarmChanged = false;
+ static volatile uint32_t sTestUntil = 0;
+ 
+-void nvAlarmStart() { sAlarm = true; }
+-void nvAlarmStop() { sAlarm = false; }
++void nvAlarmStart() {
++  if (!sAlarm) { sAlarm = true; sAlarmChanged = true; }
++}
++void nvAlarmStop() {
++  if (sAlarm) { sAlarm = false; sAlarmChanged = true; }
++}
+ bool nvAlarmActive() { return sAlarm; }
+ void nvAlarmTest() { sTestUntil = millis() + 1000; }
+ 
++#if NV_ONBOARD_PIXELS
+ static uint32_t rgb(uint8_t r, uint8_t g, uint8_t b) { return sPix.Color(r, g, b); }
+ 
+-static void alarmTask(void *) {
++static void updatePixels(uint32_t now) {
++  bool test = (int32_t)(sTestUntil - now) > 0;
++  bool flash = test || (sAlarm && (now % 400) < 250);
++  for (int i = 1; i <= 4; i++) sPix.setPixelColor(i, flash ? rgb(80, 0, 0) : 0);
++
++  uint32_t net;
++  bool blinkOn = (now % 1000) < 500;
++  if (gSafeMode) net = blinkOn ? rgb(PIXEL_BRIGHT, 0, PIXEL_BRIGHT) : 0;
++  else if (nvProvisionOpen() && blinkOn) net = rgb(0, 0, PIXEL_BRIGHT);
++  else if (!gWifiUp) net = rgb(PIXEL_BRIGHT, 0, 0);
++  else if (gBackendAuthError) net = rgb(PIXEL_BRIGHT / 2, 0, PIXEL_BRIGHT);
++  else if (!gBackendOk) net = rgb(PIXEL_BRIGHT, PIXEL_BRIGHT / 2, 0);
++  else net = rgb(0, PIXEL_BRIGHT, 0);
++  sPix.setPixelColor(0, net);
++
++  uint8_t b = gBatteryPct;
++  uint32_t bat = 0;
++  if (b <= 100) bat = b > 70 ? rgb(0, PIXEL_BRIGHT, 0) : (b > 20 ? rgb(PIXEL_BRIGHT, PIXEL_BRIGHT / 2, 0) : rgb(PIXEL_BRIGHT, 0, 0));
++  sPix.setPixelColor(PIXEL_COUNT - 1, bat);
++  sPix.show();
++}
++#endif
++
++static void uiTask(void *) {
+   bool btnDown = false, longFired = false;
+   uint32_t btnSince = 0;
+   for (;;) {
+     uint32_t now = millis();
+ 
+-    // ---- BOOT button ----
++    // ---- BOOT button (read only) ----
+     bool pressed = digitalRead(PIN_BOOT_BTN) == LOW;
+     if (pressed && !btnDown) { btnDown = true; btnSince = now; longFired = false; }
+     if (pressed && btnDown && !longFired && now - btnSince >= 3000) {
+       longFired = true;
+       gProvisionUntil = now + PROVISION_WINDOW_MS;
+-      sTestUntil = now + 150;  // short beep to confirm
+       NVLOG("[ui] setup window opened for %d s\n", PROVISION_WINDOW_MS / 1000);
+     }
+     if (!pressed && btnDown) {
+       btnDown = false;
+       if (!longFired && now - btnSince >= 30 && sAlarm) {
+-        sAlarm = false;
++        nvAlarmStop();
+         nvOnLocalSilence();
+       }
+     }
+ 
+-    // ---- alarm pattern: 250 ms on, 150 ms off ----
+-    bool test = (int32_t)(sTestUntil - now) > 0;
+-    bool on = test || (sAlarm && (now % 400) < 250);
+-    digitalWrite(PIN_BUZZER, on ? HIGH : LOW);
+-    digitalWrite(PIN_USER_LED, on ? HIGH : LOW);
+-    for (int i = 1; i <= 4; i++) sPix.setPixelColor(i, on ? rgb(80, 0, 0) : 0);
+-
+-    // ---- network pixel ----
+-    uint32_t net;
+-    if (nvProvisionOpen() && (now % 1000) < 500) net = rgb(0, 0, PIXEL_BRIGHT);
+-    else if (!gWifiUp) net = rgb(PIXEL_BRIGHT, 0, 0);
+-    else if (gBackendAuthError) net = rgb(PIXEL_BRIGHT, 0, PIXEL_BRIGHT);
+-    else if (!gBackendOk) net = rgb(PIXEL_BRIGHT, PIXEL_BRIGHT / 2, 0);
+-    else net = rgb(0, PIXEL_BRIGHT, 0);
+-    sPix.setPixelColor(0, net);
+-
+-    // ---- battery pixel ----
+-    uint8_t b = gBatteryPct;
+-    uint32_t bat = 0;
+-    if (b <= 100) bat = b > 70 ? rgb(0, PIXEL_BRIGHT, 0) : (b > 20 ? rgb(PIXEL_BRIGHT, PIXEL_BRIGHT / 2, 0) : rgb(PIXEL_BRIGHT, 0, 0));
+-    sPix.setPixelColor(PIXEL_COUNT - 1, bat);
++    // ---- report alarm state changes (serial + BLE + event) ----
++    if (sAlarmChanged) {
++      sAlarmChanged = false;
++      nvOnAlarmChanged(sAlarm);
++    }
+ 
+-    sPix.show();
++#if NV_ONBOARD_PIXELS
++    updatePixels(now);
++#endif
+     vTaskDelay(pdMS_TO_TICKS(20));
+   }
+ }
+ 
+ void nvAlarmBegin() {
+-  pinMode(PIN_BUZZER, OUTPUT);
+-  digitalWrite(PIN_BUZZER, LOW);
+-  pinMode(PIN_USER_LED, OUTPUT);
+-  digitalWrite(PIN_USER_LED, LOW);
+-  pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
++  pinMode(PIN_BOOT_BTN, INPUT_PULLUP);  // on-board button; board already pulls it up
++#if NV_ONBOARD_PIXELS
+   sPix.begin();
+   sPix.clear();
+   sPix.show();
+-  xTaskCreatePinnedToCore(alarmTask, "nv_alarm", 3072, nullptr, 4, nullptr, 0);
++#endif
++  xTaskCreatePinnedToCore(uiTask, "nv_ui", STACK_UI, nullptr, 4, &gTaskUi, 0);
+ }
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,11 +1,15 @@
+ #pragma once
+ #include <Arduino.h>
+ 
++// Software-only local alarm in this version: no buzzer, no external LEDs.
++// The alarm state is logged on serial, notified over BLE, reported in every
++// heartbeat, and (if NV_ONBOARD_PIXELS) shown on the on-board RGB LEDs.
+ void nvAlarmBegin();
+ void nvAlarmStart();
+ void nvAlarmStop();
+ bool nvAlarmActive();
+-void nvAlarmTest();  // 1 s beep + red flash, for setup checks
++void nvAlarmTest();  // 1 s visual test on the on-board LEDs
+ 
+-// Implemented in NetraVaani-Device.ino
++// Implemented in nv_events.cpp
+ void nvOnLocalSilence();
++void nvOnAlarmChanged(bool active);
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,52 +1,45 @@
+-// Bluetooth LE: (1) commissioning service for the admin frontend,
++// Bluetooth LE: (1) NetraVaani commissioning service for the admin frontend,
+ // (2) Chords-compatible raw streaming for calibration screens / Chords Web.
+-// Runtime patient events do NOT use Bluetooth; they go over Wi-Fi to the backend.
++// Runtime patient events do NOT use Bluetooth; they go over Wi-Fi.
++//
++// v1.1.0 fixes:
++//  - Advertising no longer includes a 128-bit service UUID. In v1.0.0 that UUID
++//    (18 bytes) was copied into the scan response together with the 18-character
++//    name, exceeding the 31-byte BLE limit; the stack rejected the scan response
++//    and the name "NPG-Lite-3CH:XX:XX" was never broadcast, so browsers filtering
++//    on the "NPG" name prefix could not find the board. Advertising now matches
++//    the official NPG Lite firmware: flags in the advertisement, name + TX power
++//    in the scan response (23 bytes).
++//  - Callbacks only copy data. JSON parsing and flash writes run in the events task.
+ #include <BLEDevice.h>
+ #include <BLEServer.h>
+ #include <BLEUtils.h>
+ #include <BLE2902.h>
+-#include <ArduinoJson.h>
+ #include "nv_config.h"
+ #include "nv_state.h"
+-#include "nv_storage.h"
+ #include "nv_ble.h"
+-#include "nv_alarm.h"
+ 
+-static BLEServer *sServer = nullptr;
+ static BLECharacteristic *sData = nullptr, *sControl = nullptr, *sBattery = nullptr;
+ static BLECharacteristic *sIdentity = nullptr, *sProvision = nullptr, *sStatus = nullptr;
+ static volatile bool sStreaming = false;
+ static volatile bool sConnected = false;
++static String sIdentityCache = "{}";
+ 
+ static uint8_t sPkt[BLOCK_COUNT * (1 + 2 * NUM_BIO_CH)];
+ static uint8_t sPktIdx = 0, sCounter = 0;
+ 
+ bool nvBleConnected() { return sConnected; }
+ 
+-String nvIdentityJson() {
+-  NvSettings s = nvGetSettings();
+-  NvConfig c = nvGetConfig();
+-  JsonDocument d;
+-  d["hardwareId"] = gHardwareId;
+-  d["firmware"] = NV_FW_VERSION;
+-  d["deviceId"] = s.deviceId.length() ? s.deviceId.c_str() : nullptr;
+-  d["provisioned"] = s.provisioned();
+-  d["provisionWindowOpen"] = nvProvisionOpen();
+-  d["wifi"] = gWifiUp ? "connected" : (s.ssid.length() ? "disconnected" : "not_set");
+-  d["backend"] = gBackendAuthError ? "auth_error" : (gBackendOk ? "ok" : "unreachable");
+-  d["configVersion"] = c.version;
+-  if (gBatteryPct <= 100) d["battery"] = gBatteryPct;
+-  JsonArray ch = d["channels"].to<JsonArray>();
+-  for (int i = 0; i < 3; i++) ch.add(gChannelOk[i] ? "ok" : "bad");
+-  String out;
+-  serializeJson(d, out);
+-  return out;
++void nvBleSetIdentity(const String &json) {
++  nvLock();
++  sIdentityCache = json;
++  nvUnlock();
+ }
+ 
+ class ServerCb : public BLEServerCallbacks {
+   void onConnect(BLEServer *) override {
+     sConnected = true;
+-    BLEDevice::stopAdvertising();
++    BLEDevice::stopAdvertising();  // same as the official firmware
+   }
+   void onDisconnect(BLEServer *) override {
+     sConnected = false;
+@@ -79,83 +72,33 @@
+ 
+ class IdentityCb : public BLECharacteristicCallbacks {
+   void onRead(BLECharacteristic *c) override {
+-    c->setValue(nvIdentityJson().c_str());
++    nvLock();
++    String copy = sIdentityCache;
++    nvUnlock();
++    c->setValue(copy.c_str());
+   }
+ };
+ 
+-static void reply(bool ok, const char *msg) {
+-  JsonDocument d;
+-  d["type"] = "reply";
+-  d["ok"] = ok;
+-  d["msg"] = msg;
+-  String s;
+-  serializeJson(d, s);
+-  nvBleNotifyStatus(s);
+-}
+-
+-// Provisioning commands (JSON). Changing settings requires the setup window,
+-// which is open for 3 minutes after boot when unprovisioned, or after holding
+-// the BOOT button for 3 seconds.
+ class ProvisionCb : public BLECharacteristicCallbacks {
+   void onWrite(BLECharacteristic *c) override {
+     String raw = c->getValue();
+-    JsonDocument d;
+-    if (deserializeJson(d, raw)) { reply(false, "invalid JSON"); return; }
+-    String cmd = d["cmd"] | "";
+-
+-    if (cmd == "identity") { nvBleNotifyStatus(nvIdentityJson()); return; }
+-    if (!nvProvisionOpen()) { reply(false, "setup window closed: hold BOOT for 3 s"); return; }
+-
+-    if (cmd == "provision" || cmd == "wifi") {
+-      NvSettings s = nvGetSettings();
+-      if (d["ssid"].is<const char *>()) s.ssid = d["ssid"].as<const char *>();
+-      if (d["password"].is<const char *>()) s.pass = d["password"].as<const char *>();
+-      if (cmd == "provision") {
+-        s.apiBase = d["api"] | "";
+-        s.deviceId = d["deviceId"] | "";
+-        s.token = d["token"] | "";
+-        while (s.apiBase.endsWith("/")) s.apiBase.remove(s.apiBase.length() - 1);
+-        if (!(s.apiBase.startsWith("http://") || s.apiBase.startsWith("https://"))) {
+-          reply(false, "api must start with http:// or https://");
+-          return;
+-        }
+-        if (s.deviceId.length() < 3 || s.deviceId.length() > 40 || s.token.length() < 16 || s.token.length() > 200) {
+-          reply(false, "deviceId or token has invalid length");
+-          return;
+-        }
+-      }
+-      if (s.ssid.length() == 0 || s.ssid.length() > 32 || s.pass.length() > 64) {
+-        reply(false, "invalid Wi-Fi credentials");
+-        return;
+-      }
+-      nvSaveSettings(s);
+-      nvLock();
+-      gSettings = s;
+-      nvUnlock();
+-      gSettingsChanged = true;
+-      reply(true, "saved, connecting to Wi-Fi");
+-      return;
+-    }
+-    if (cmd == "test_alarm") { nvAlarmTest(); reply(true, "alarm test"); return; }
+-    if (cmd == "close_window") { gProvisionUntil = 0; reply(true, "setup window closed"); return; }
+-    if (cmd == "factory_reset") {
+-      reply(true, "erasing settings, rebooting");
+-      nvFactoryReset();
+-      delay(500);
+-      ESP.restart();
+-    }
+-    reply(false, "unknown cmd");
++    nvPostProvisionCommand((const uint8_t *)raw.c_str(), raw.length());
+   }
+ };
+ 
+-void nvBleBegin(const char *name) {
++void nvBleReply(bool ok, const char *msg) {
++  String s = String("{\"type\":\"reply\",\"ok\":") + (ok ? "true" : "false") + ",\"msg\":\"" + msg + "\"}";
++  nvBleNotifyStatus(s);
++}
++
++bool nvBleBegin(const char *name) {
+   BLEDevice::init(name);
+   BLEDevice::setMTU(500);
+-  sServer = BLEDevice::createServer();
+-  sServer->setCallbacks(new ServerCb());
++  BLEServer *server = BLEDevice::createServer();
++  server->setCallbacks(new ServerCb());
+ 
+-  // --- Chords-compatible service ---
+-  BLEService *chords = sServer->createService(CHORDS_SERVICE_UUID);
++  // --- Chords-compatible service (UUIDs unchanged) ---
++  BLEService *chords = server->createService(CHORDS_SERVICE_UUID);
+   sData = chords->createCharacteristic(CHORDS_DATA_UUID, BLECharacteristic::PROPERTY_NOTIFY);
+   sData->addDescriptor(new BLE2902());
+   sControl = chords->createCharacteristic(CHORDS_CONTROL_UUID, BLECharacteristic::PROPERTY_READ |
+@@ -168,8 +111,8 @@
+   sBattery->addDescriptor(new BLE2902());
+   chords->start();
+ 
+-  // --- NetraVaani commissioning service ---
+-  BLEService *nv = sServer->createService(NV_SERVICE_UUID);
++  // --- NetraVaani commissioning service (UUIDs unchanged) ---
++  BLEService *nv = server->createService(NV_SERVICE_UUID);
+   sIdentity = nv->createCharacteristic(NV_IDENTITY_UUID, BLECharacteristic::PROPERTY_READ);
+   sIdentity->setCallbacks(new IdentityCb());
+   sProvision = nv->createCharacteristic(NV_PROVISION_UUID, BLECharacteristic::PROPERTY_WRITE);
+@@ -179,16 +122,17 @@
+   sStatus->addDescriptor(new BLE2902());
+   nv->start();
+ 
+-  BLEAdvertising *adv = BLEDevice::getAdvertising();
+-  adv->addServiceUUID(CHORDS_SERVICE_UUID);
+-  adv->setScanResponse(true);
+-  BLEDevice::startAdvertising();
++  // Default advertising, as in the official firmware: no service UUIDs, so the
++  // name fits in the scan response.
++  bool ok = BLEDevice::getAdvertising()->start();
++  NVLOG("[ble] %s as \"%s\"\n", ok ? "advertising" : "ADVERTISING FAILED", name);
++  return ok;
+ }
+ 
+ // Called from the ADC task for every sample. Builds 70-byte Chords packets:
+ // 10 x [counter, CH1 hi, CH1 lo, CH2 hi, CH2 lo, CH3 hi, CH3 lo]
+ void nvBleStreamPush(const uint16_t v[3]) {
+-  if (!sStreaming || !sConnected) return;
++  if (!sStreaming || !sConnected || !sData) return;
+   uint8_t *p = &sPkt[sPktIdx * (1 + 2 * NUM_BIO_CH)];
+   p[0] = sCounter++;
+   for (int c = 0; c < NUM_BIO_CH; c++) {
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,9 +1,14 @@
+ #pragma once
+ #include <Arduino.h>
+ 
+-void nvBleBegin(const char *deviceName);
++bool nvBleBegin(const char *deviceName);     // returns false if advertising failed
+ void nvBleStreamPush(const uint16_t v[3]);   // Chords-format raw packets (calibration)
+ void nvBleNotifyBattery(uint8_t pct);
+-void nvBleNotifyStatus(const String &json);  // gesture/test/provisioning messages
++void nvBleNotifyStatus(const String &json);  // replies, gesture/signal/alarm messages
++void nvBleReply(bool ok, const char *msg);
++void nvBleSetIdentity(const String &json);   // cached identity returned on read
+ bool nvBleConnected();
+-String nvIdentityJson();
++
++// Implemented in nv_events.cpp: provisioning commands are handled outside the
++// Bluetooth stack's callback task.
++void nvPostProvisionCommand(const uint8_t *data, size_t len);
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -6,16 +6,40 @@
+ //  Board: Upside Down Labs NPG Lite (ESP32-C6) on the Proto Playmate
+ // ============================================================================
+ 
+-#define NV_FW_VERSION "nv-1.0.0"
++#define NV_FW_VERSION "nv-1.1.0"
+ 
+-// ---- Pins (taken from Upside Down Labs' official NPG Lite firmware) ----
+-#define PIN_USER_LED 7   // user LED on the NPG Lite
+-#define PIN_BUZZER 8     // buzzer pin (same pin the VibZ Playmate uses)
+-#define PIN_BOOT_BTN 9   // BOOT/USER button, active LOW
+-#define PIN_PIXELS 15    // 6 addressable RGB LEDs
++// ---- Pins: only parts that are physically ON the NPG Lite board ----
++// Confirmed from Upside Down Labs' docs and official firmware:
++//   GPIO 15 = the 6 on-board addressable RGB LEDs
++//   GPIO 9  = on-board BOOT/USER button (read only)
++// NOT used in this version (no external hardware is assumed):
++//   GPIO 8 (VibZ buzzer pin) and GPIO 7 are never configured or driven.
++#define PIN_BOOT_BTN 9
++#define PIN_PIXELS 15
+ #define PIXEL_COUNT 6
+ #define PIXEL_BRIGHT 20
+ 
++// ---- Feature switches (use these to isolate a crash: flash with one disabled) ----
++#define NV_ENABLE_BLE 1        // Bluetooth commissioning + calibration stream
++#define NV_ENABLE_WIFI 1       // Wi-Fi + backend communication
++#define NV_ENABLE_ADC 1        // signal acquisition + gesture detection
++#define NV_ONBOARD_PIXELS 1    // on-board RGB LEDs for status/alarm (0 = fully software-only)
++
++// ---- Crash-loop protection ----
++// After this many consecutive crash/watchdog/brownout resets the device boots
++// in SAFE MODE: Bluetooth only (so it can still be found and reset), no ADC,
++// no Wi-Fi. The cause is printed on serial and shown in the identity JSON.
++// Safe mode is a failure state, not normal operation. 0 = disabled.
++#define NV_SAFE_MODE_AFTER_CRASHES 3
++#define NV_STABLE_UPTIME_MS 120000UL  // clears the crash counter
++
++// ---- Task stacks (bytes) ----
++#define STACK_ADC 8192
++#define STACK_EVT 8192
++#define STACK_NET 16384
++#define STACK_UI 4096
++#define STACK_DIAG 4096
++
+ // ---- Signal acquisition ----
+ #define SAMPLE_RATE_HZ 500  // per channel
+ #define NUM_BIO_CH 3        // CH1 EOG-H, CH2 EOG-V, CH3 EMG
+@@ -35,8 +59,10 @@
+ #define GESTURE_REFRACTORY_MS 1500  // ignore new gestures right after one fires
+ 
+ // ---- Safety ----
+-// 1 = gesture G01 (triple clench) always means REQUEST_HELP and sounds the
+-// local alarm, whatever the remote configuration says.
++// 1 = gesture G01 (triple clench) always means REQUEST_HELP and raises the
++// local alarm, whatever the remote configuration says. In this version the
++// alarm is software-only: state, serial log, BLE notification, heartbeat
++// flag and (if enabled) on-board RGB LEDs. No buzzer output.
+ #define NV_FORCE_UNIVERSAL_HELP 1
+ 
+ // ---- HTTPS ----
+@@ -46,7 +72,8 @@
+ #define NV_ROOT_CA ""
+ 
+ // ---- Debug ----
+-#define NV_DEBUG_SERIAL 1  // logs on USB serial at 115200 baud
++#define NV_DEBUG_SERIAL 1  // logs on USB serial (USB CDC) at 115200 baud
++#define NV_DIAG_EVERY_MS 30000  // periodic heap/stack report on serial
+ #define NV_DEBUG_SIGNAL 0  // 1 = print detector envelopes for tuning (Serial Plotter)
+ #if NV_DEBUG_SERIAL
+ #define NVLOG(...) Serial.printf(__VA_ARGS__)
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -0,0 +1,114 @@
++// Boot and runtime diagnostics. Nothing here suppresses errors: crashes still
++// print their full panic report on USB serial and reboot as usual. This module
++// additionally prints WHY the previous boot ended, using the core dump that
++// Arduino-ESP32 3.2.0 saves to the "coredump" flash partition.
++#include "esp_system.h"
++#include "esp_core_dump.h"
++#include "esp_attr.h"
++#include "nv_config.h"
++#include "nv_state.h"
++#include "nv_diag.h"
++#include "nv_alarm.h"
++
++#define NV_RTC_MAGIC 0x4E56A11Cu
++RTC_NOINIT_ATTR static uint32_t rtcMagic;
++RTC_NOINIT_ATTR static uint32_t rtcCrashCount;
++
++static const char *resetName(esp_reset_reason_t r) {
++  switch (r) {
++    case ESP_RST_POWERON: return "POWERON";
++    case ESP_RST_EXT: return "EXTERNAL";
++    case ESP_RST_SW: return "SOFTWARE";
++    case ESP_RST_PANIC: return "PANIC";
++    case ESP_RST_INT_WDT: return "INT_WATCHDOG";
++    case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
++    case ESP_RST_WDT: return "OTHER_WATCHDOG";
++    case ESP_RST_DEEPSLEEP: return "DEEPSLEEP";
++    case ESP_RST_BROWNOUT: return "BROWNOUT";
++    case ESP_RST_SDIO: return "SDIO";
++    case ESP_RST_USB: return "USB";
++    case ESP_RST_JTAG: return "JTAG";
++    default: return "UNKNOWN";
++  }
++}
++
++static bool isAbnormal(esp_reset_reason_t r) {
++  return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT ||
++         r == ESP_RST_WDT || r == ESP_RST_BROWNOUT;
++}
++
++static void printPreviousCrash() {
++  if (esp_core_dump_image_check() != ESP_OK) {
++    NVLOG("[diag] no stored crash report\n");
++    return;
++  }
++  esp_core_dump_summary_t *sum = (esp_core_dump_summary_t *)malloc(sizeof(esp_core_dump_summary_t));
++  if (sum && esp_core_dump_get_summary(sum) == ESP_OK) {
++    NVLOG("[diag] PREVIOUS CRASH: task '%s'  PC=0x%08lx  RA=0x%08lx  MCAUSE=0x%08lx  MTVAL=0x%08lx\n",
++          sum->exc_task, (unsigned long)sum->exc_pc, (unsigned long)sum->ex_info.ra,
++          (unsigned long)sum->ex_info.mcause, (unsigned long)sum->ex_info.mtval);
++    NVLOG("[diag] decode with: riscv32-esp-elf-addr2line -pfiaC -e NetraVaani-Device.ino.elf 0x%08lx 0x%08lx\n",
++          (unsigned long)sum->exc_pc, (unsigned long)sum->ex_info.ra);
++  } else {
++    NVLOG("[diag] crash report present but unreadable\n");
++  }
++  free(sum);
++  esp_core_dump_image_erase();  // so the next report is about the next crash
++}
++
++void nvDiagBoot() {
++  esp_reset_reason_t r = esp_reset_reason();
++  strlcpy(gLastReset, resetName(r), sizeof(gLastReset));
++
++  if (rtcMagic != NV_RTC_MAGIC || r == ESP_RST_POWERON) {
++    rtcMagic = NV_RTC_MAGIC;
++    rtcCrashCount = 0;
++  }
++  rtcCrashCount = isAbnormal(r) ? rtcCrashCount + 1 : 0;
++  gCrashCount = rtcCrashCount;
++
++  NVLOG("[diag] reset reason: %s | consecutive abnormal resets: %lu | free heap: %lu\n",
++        gLastReset, (unsigned long)gCrashCount, (unsigned long)ESP.getFreeHeap());
++  if (r == ESP_RST_BROWNOUT)
++    NVLOG("[diag] BROWNOUT: supply voltage dropped. Check LiPo charge/polarity and the USB cable.\n");
++  printPreviousCrash();
++
++#if NV_SAFE_MODE_AFTER_CRASHES > 0
++  if (gCrashCount >= NV_SAFE_MODE_AFTER_CRASHES) {
++    gSafeMode = true;
++    NVLOG("[diag] !!! SAFE MODE: %lu consecutive crashes. Bluetooth only; ADC and Wi-Fi are OFF.\n",
++          (unsigned long)gCrashCount);
++    NVLOG("[diag] !!! This is a failure state. Fix the crash above, then power-cycle the board.\n");
++  }
++#endif
++}
++
++static void stackLine(const char *name, TaskHandle_t t) {
++  if (t) NVLOG(" %s=%u", name, (unsigned)uxTaskGetStackHighWaterMark(t));
++}
++
++static void diagTask(void *) {
++  bool stableReported = false;
++  for (;;) {
++    vTaskDelay(pdMS_TO_TICKS(NV_DIAG_EVERY_MS));
++    uint32_t up = millis();
++    if (!stableReported && up >= NV_STABLE_UPTIME_MS) {
++      stableReported = true;
++      rtcCrashCount = 0;  // counts as a good boot from now on
++      NVLOG("[diag] stable for %lu s, crash counter cleared\n", (unsigned long)(up / 1000));
++    }
++    NVLOG("[diag] up=%lus heap=%lu minHeap=%lu stackFree(bytes):", (unsigned long)(up / 1000),
++          (unsigned long)ESP.getFreeHeap(), (unsigned long)ESP.getMinFreeHeap());
++    stackLine("adc", gTaskAdc);
++    stackLine("evt", gTaskEvt);
++    stackLine("net", gTaskNet);
++    stackLine("ui", gTaskUi);
++    stackLine("diag", gTaskDiag);
++    NVLOG(" | wifi=%s backend=%s alarm=%s safe=%d\n", gWifiUp ? "up" : "down",
++          gBackendOk ? "ok" : "no", nvAlarmActive() ? "ON" : "off", gSafeMode);
++  }
++}
++
++void nvDiagBegin() {
++  xTaskCreatePinnedToCore(diagTask, "nv_diag", STACK_DIAG, nullptr, 1, &gTaskDiag, 0);
++}
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -0,0 +1,8 @@
++#pragma once
++#include <Arduino.h>
++
++// Call first thing in setup(): reads the reset reason, prints the previous
++// crash (from the flash core dump) and decides whether to enter safe mode.
++void nvDiagBoot();
++// Starts the periodic heap/stack report and the stable-uptime timer.
++void nvDiagBegin();
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -1,20 +1,86 @@
+-// Event hooks: what happens when a gesture is detected, the alarm is silenced
+-// locally, or signal quality changes.
++// Events task. Everything that allocates memory, writes flash, builds JSON or
++// talks to Bluetooth/the network queue runs here, NOT in the 500 Hz ADC task
++// or in Bluetooth stack callbacks. Those only post small messages.
+ #include <Arduino.h>
+ #include <ArduinoJson.h>
++#include "freertos/queue.h"
+ #include "nv_config.h"
+ #include "nv_types.h"
+ #include "nv_state.h"
++#include "nv_storage.h"
+ #include "nv_alarm.h"
+ #include "nv_ble.h"
+ #include "nv_detect.h"
+ #include "nv_net.h"
++#include "nv_events.h"
+ 
++enum NvMsgKind : uint8_t { MSG_GESTURE, MSG_QUALITY, MSG_SILENCE, MSG_ALARM, MSG_PROVISION };
++struct NvMsg {
++  NvMsgKind kind;
++  uint8_t value;
++  uint16_t len;
++  char data[520];
++};
++
++static QueueHandle_t sQ = nullptr;
++static volatile uint32_t sDropped = 0;
++
++static void post(NvMsgKind k, uint8_t v, const uint8_t *data = nullptr, size_t len = 0) {
++  if (!sQ) return;
++  NvMsg m;
++  m.kind = k;
++  m.value = v;
++  m.len = 0;
++  if (data && len) {
++    m.len = len < sizeof(m.data) - 1 ? len : sizeof(m.data) - 1;
++    memcpy(m.data, data, m.len);
++  }
++  m.data[m.len] = 0;
++  if (xQueueSend(sQ, &m, 0) != pdTRUE) sDropped = sDropped + 1;
++}
++
++// ---------- hooks called from other tasks (must stay tiny) ----------
+ void nvOnGesture(NvGesture g) {
++#if NV_FORCE_UNIVERSAL_HELP
++  if (g == G01) nvAlarmStart();  // raise the local alarm immediately, no queue in between
++#endif
++  post(MSG_GESTURE, g);
++}
++void nvOnSignalQualityChanged() { post(MSG_QUALITY, 0); }
++void nvOnLocalSilence() { post(MSG_SILENCE, 0); }
++void nvOnAlarmChanged(bool active) { post(MSG_ALARM, active ? 1 : 0); }
++void nvPostProvisionCommand(const uint8_t *data, size_t len) { post(MSG_PROVISION, 0, data, len); }
++
++// ---------- identity JSON (cached for Bluetooth reads) ----------
++static String identityJson() {
++  NvSettings s = nvGetSettings();
++  NvConfig c = nvGetConfig();
++  JsonDocument d;
++  d["hardwareId"] = gHardwareId;
++  d["firmware"] = NV_FW_VERSION;
++  if (s.deviceId.length()) d["deviceId"] = s.deviceId;
++  else d["deviceId"] = nullptr;
++  d["provisioned"] = s.provisioned();
++  d["provisionWindowOpen"] = nvProvisionOpen();
++  d["wifi"] = gWifiUp ? "connected" : (s.ssid.length() ? "disconnected" : "not_set");
++  d["backend"] = gBackendAuthError ? "auth_error" : (gBackendOk ? "ok" : "unreachable");
++  d["configVersion"] = c.version;
++  if (gBatteryPct <= 100) d["battery"] = gBatteryPct;
++  JsonArray ch = d["channels"].to<JsonArray>();
++  for (int i = 0; i < 3; i++) ch.add(gChannelOk[i] ? "ok" : "bad");
++  d["alarmActive"] = nvAlarmActive();
++  d["lastReset"] = gLastReset;
++  d["safeMode"] = gSafeMode;
++  String out;
++  serializeJson(d, out);
++  return out;
++}
++
++// ---------- handlers ----------
++static void handleGesture(NvGesture g) {
+   NvConfig c = nvGetConfig();
+   const NvGestureMap &m = c.map[g];
+ 
+-  // Always report detections over BLE so calibration screens can count them
+   JsonDocument b;
+   b["type"] = "gesture";
+   b["gestureId"] = NV_GESTURE_CODES[g];
+@@ -27,9 +93,8 @@
+   NVLOG("[gesture] %s %s -> %s\n", NV_GESTURE_CODES[g], NV_GESTURE_NAMES[g], m.enabled ? m.action : "(not mapped)");
+ 
+   if (!m.enabled) return;
+-
+   bool help = strcmp(m.action, "REQUEST_HELP") == 0 || strcmp(m.action, "EMERGENCY") == 0;
+-  if (help) nvAlarmStart();  // local alarm first: does not wait for the network
++  if (help) nvAlarmStart();
+ 
+   JsonDocument f;
+   f["gestureId"] = NV_GESTURE_CODES[g];
+@@ -39,14 +104,7 @@
+   nvQueueEvent("PATIENT_REQUEST", f);
+ }
+ 
+-void nvOnLocalSilence() {
+-  NVLOG("[alarm] silenced with BOOT button\n");
+-  JsonDocument f;
+-  f["reason"] = "BOOT_BUTTON";
+-  nvQueueEvent("ALARM_SILENCED_LOCAL", f);
+-}
+-
+-void nvOnSignalQualityChanged() {
++static void handleQuality() {
+   JsonDocument f;
+   JsonObject ch = f["channels"].to<JsonObject>();
+   ch["ch1"] = gChannelOk[0] ? "ok" : "bad";
+@@ -63,3 +121,102 @@
+   nvBleNotifyStatus(bs);
+ }
+ 
++static void handleAlarm(bool active) {
++  NVLOG("[alarm] %s (software-only alarm: no buzzer in this build)\n", active ? "ACTIVE" : "cleared");
++  nvBleNotifyStatus(String("{\"type\":\"alarm\",\"active\":") + (active ? "true" : "false") + "}");
++}
++
++static void handleSilence() {
++  NVLOG("[alarm] silenced with BOOT button\n");
++  JsonDocument f;
++  f["reason"] = "BOOT_BUTTON";
++  nvQueueEvent("ALARM_SILENCED_LOCAL", f);
++}
++
++// Provisioning commands (JSON). Changing settings requires the setup window,
++// open for 3 minutes after boot when unprovisioned, or after holding BOOT 3 s.
++static void handleProvision(const char *raw) {
++  JsonDocument d;
++  if (deserializeJson(d, raw)) { nvBleReply(false, "invalid JSON"); return; }
++  String cmd = d["cmd"] | "";
++
++  if (cmd == "identity") { nvBleNotifyStatus(identityJson()); return; }
++  if (!nvProvisionOpen()) { nvBleReply(false, "setup window closed: hold BOOT for 3 s"); return; }
++
++  if (cmd == "provision" || cmd == "wifi") {
++    NvSettings s = nvGetSettings();
++    if (d["ssid"].is<const char *>()) s.ssid = d["ssid"].as<const char *>();
++    if (d["password"].is<const char *>()) s.pass = d["password"].as<const char *>();
++    if (cmd == "provision") {
++      s.apiBase = d["api"] | "";
++      s.deviceId = d["deviceId"] | "";
++      s.token = d["token"] | "";
++      s.apiBase.trim();
++      while (s.apiBase.endsWith("/")) s.apiBase.remove(s.apiBase.length() - 1);
++      if (!(s.apiBase.startsWith("http://") || s.apiBase.startsWith("https://"))) {
++        nvBleReply(false, "api must start with http:// or https://");
++        return;
++      }
++      if (s.deviceId.length() < 3 || s.deviceId.length() > 40 || s.token.length() < 16 || s.token.length() > 200) {
++        nvBleReply(false, "deviceId or token has invalid length");
++        return;
++      }
++    }
++    if (s.ssid.length() == 0 || s.ssid.length() > 32 || s.pass.length() > 64) {
++      nvBleReply(false, "invalid Wi-Fi credentials");
++      return;
++    }
++    nvSaveSettings(s);
++    nvLock();
++    gSettings = s;
++    nvUnlock();
++    gSettingsChanged = true;
++    NVLOG("[setup] saved settings for %s, Wi-Fi \"%s\", backend %s\n", s.deviceId.c_str(), s.ssid.c_str(), s.apiBase.c_str());
++#if NV_ENABLE_WIFI
++    nvBleReply(true, gSafeMode ? "saved; SAFE MODE: Wi-Fi off until crash is fixed" : "saved, connecting to Wi-Fi");
++#else
++    nvBleReply(true, "saved; Wi-Fi disabled in this build (NV_ENABLE_WIFI 0)");
++#endif
++    return;
++  }
++  if (cmd == "test_alarm") { nvAlarmTest(); nvBleReply(true, "LED test (software alarm, no buzzer)"); return; }
++  if (cmd == "close_window") { gProvisionUntil = 0; nvBleReply(true, "setup window closed"); return; }
++  if (cmd == "reboot") { nvBleReply(true, "rebooting"); delay(300); ESP.restart(); }
++  if (cmd == "factory_reset") {
++    nvBleReply(true, "erasing settings, rebooting");
++    nvFactoryReset();
++    delay(500);
++    ESP.restart();
++  }
++  nvBleReply(false, "unknown cmd");
++}
++
++static void eventsTask(void *) {
++  NvMsg *m = (NvMsg *)malloc(sizeof(NvMsg));  // keep the 520-byte buffer off the stack
++  uint32_t lastIdentity = 0, reportedDrops = 0;
++  for (;;) {
++    if (xQueueReceive(sQ, m, pdMS_TO_TICKS(250)) == pdTRUE) {
++      switch (m->kind) {
++        case MSG_GESTURE: handleGesture((NvGesture)m->value); break;
++        case MSG_QUALITY: handleQuality(); break;
++        case MSG_SILENCE: handleSilence(); break;
++        case MSG_ALARM: handleAlarm(m->value); break;
++        case MSG_PROVISION: handleProvision(m->data); break;
++      }
++    }
++    if (millis() - lastIdentity >= 1000) {
++      lastIdentity = millis();
++      nvBleSetIdentity(identityJson());
++    }
++    if (sDropped != reportedDrops) {
++      NVLOG("[evt] WARNING: %lu messages dropped (events queue full)\n", (unsigned long)(sDropped - reportedDrops));
++      reportedDrops = sDropped;
++    }
++  }
++}
++
++void nvEventsBegin() {
++  sQ = xQueueCreate(6, sizeof(NvMsg));
++  nvBleSetIdentity(identityJson());
++  xTaskCreatePinnedToCore(eventsTask, "nv_evt", STACK_EVT, nullptr, 3, &gTaskEvt, 0);
++}
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -0,0 +1,4 @@
++#pragma once
++#include <Arduino.h>
++
++void nvEventsBegin();  // starts the events task (gestures, provisioning, identity)
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -0,0 +1,75 @@
++// setup() and loop() live in a .cpp file on purpose: the Arduino builder then
++// has no functions in the .ino to auto-generate prototypes for. In v1.0.0 a
++// mis-generated prototype placed a call to setup() inside setup() itself
++// (infinite recursion, stack overflow, reboot loop on every boot).
++#include <Arduino.h>
++#include "esp_mac.h"
++#include "nv_config.h"
++#include "nv_types.h"
++#include "nv_state.h"
++#include "nv_storage.h"
++#include "nv_diag.h"
++#include "nv_alarm.h"
++#include "nv_ble.h"
++#include "nv_events.h"
++#include "nv_signal.h"
++#include "nv_net.h"
++
++void setup() {
++  Serial.begin(115200);
++  Serial.setTxTimeoutMs(0);  // never block a task when no USB host is reading
++  uint32_t t0 = millis();
++  while (!Serial && millis() - t0 < 1500) delay(10);  // give the Serial Monitor a moment to attach
++
++  nvStateBegin();
++  NVLOG("\n=== NetraVaani %s booting ===\n", NV_FW_VERSION);
++  nvDiagBoot();  // reset reason, previous crash, safe-mode decision
++
++  nvStorageBegin();
++  gBootId = nvNextBootId();
++
++  uint8_t mac[6];
++  esp_read_mac(mac, ESP_MAC_EFUSE_FACTORY);
++  snprintf(gHardwareId, sizeof(gHardwareId), "NPGLITE-%02X%02X%02X%02X%02X%02X",
++           mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
++
++  gSettings = nvLoadSettings();
++  NvConfig cfg;
++  nvLoadStoredConfig(cfg);
++  nvSetConfig(cfg);
++  if (!gSettings.provisioned() || gSafeMode) gProvisionUntil = millis() + PROVISION_WINDOW_MS;
++
++  NVLOG("[boot] %s | boot %lu | device %s | config v%d | %s\n", gHardwareId, (unsigned long)gBootId,
++        gSettings.deviceId.length() ? gSettings.deviceId.c_str() : "(not registered)", (int)cfg.version,
++        gSettings.provisioned() ? "provisioned" : "setup window open (BLE)");
++
++  nvAlarmBegin();   // BOOT button + on-board LEDs (no buzzer)
++  nvEventsBegin();  // events task must exist before anything can post to it
++
++#if NV_ENABLE_BLE
++  char bleName[32];
++  snprintf(bleName, sizeof(bleName), "NPG-Lite-3CH:%02X:%02X", mac[4], mac[5]);
++  nvBleBegin(bleName);
++#else
++  NVLOG("[boot] BLE disabled in this build\n");
++#endif
++
++#if NV_ENABLE_ADC
++  if (!gSafeMode) nvSignalBegin();
++#else
++  NVLOG("[boot] ADC disabled in this build\n");
++#endif
++
++#if NV_ENABLE_WIFI
++  if (!gSafeMode) nvNetBegin();
++#else
++  NVLOG("[boot] Wi-Fi disabled in this build\n");
++#endif
++
++  nvDiagBegin();
++  NVLOG("[boot] setup complete, free heap %lu\n", (unsigned long)ESP.getFreeHeap());
++}
++
++void loop() {
++  vTaskDelay(pdMS_TO_TICKS(1000));  // everything runs in FreeRTOS tasks
++}
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -35,7 +35,11 @@
+ 
+ bool nvQueueEvent(const char *eventType, JsonDocument &fields) {
+   NvSettings s = nvGetSettings();
+-  if (!s.provisioned() || !sQueue) {
++  if (!sQueue) {
++    NVLOG("[net] network task not running (safe mode or Wi-Fi disabled), %s not queued\n", eventType);
++    return false;
++  }
++  if (!s.provisioned()) {
+     NVLOG("[net] not provisioned, event %s not queued\n", eventType);
+     return false;
+   }
+@@ -148,6 +152,8 @@
+   d["rssi"] = WiFi.RSSI();
+   d["alarmActive"] = nvAlarmActive();
+   d["queued"] = nvQueuedCount();
++  d["lastReset"] = gLastReset;
++  d["freeHeap"] = ESP.getFreeHeap();
+   JsonObject ch = d["channels"].to<JsonObject>();
+   ch["ch1"] = gChannelOk[0] ? "ok" : "bad";
+   ch["ch2"] = gChannelOk[1] ? "ok" : "bad";
+@@ -283,5 +289,5 @@
+ 
+ void nvNetBegin() {
+   sQueue = xQueueCreate(EVENT_QUEUE_LEN, sizeof(NvEvent));
+-  xTaskCreatePinnedToCore(netTask, "nv_net", 12288, nullptr, 3, nullptr, 0);
++  xTaskCreatePinnedToCore(netTask, "nv_net", STACK_NET, nullptr, 3, &gTaskNet, 0);
+ }
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -89,6 +89,7 @@
+   dcfg.format = ADC_DIGI_OUTPUT_FORMAT_TYPE2;
+   ESP_ERROR_CHECK(adc_continuous_config(sAdc, &dcfg));
+   ESP_ERROR_CHECK(adc_continuous_start(sAdc));
++  NVLOG("[adc] running: %d Hz x 3 channels + battery\n", SAMPLE_RATE_HZ);
+ }
+ 
+ static void onFullSample() {
+@@ -151,5 +152,5 @@
+   sBattCaliOk = adc_cali_create_scheme_curve_fitting(&cc, &sBattCali) == ESP_OK;
+   sAdcSem = xSemaphoreCreateBinary();
+   sBattWinStart = millis();
+-  xTaskCreatePinnedToCore(adcTask, "nv_adc", 6144, nullptr, 5, nullptr, 0);
++  xTaskCreatePinnedToCore(adcTask, "nv_adc", STACK_ADC, nullptr, 5, &gTaskAdc, 0);
+ }
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -13,6 +13,12 @@
+ volatile uint8_t gBatteryPct = 255;
+ volatile bool gChannelOk[3] = { true, true, true };
+ 
++bool gSafeMode = false;
++char gLastReset[20] = "UNKNOWN";
++uint32_t gCrashCount = 0;
++
++TaskHandle_t gTaskAdc = nullptr, gTaskEvt = nullptr, gTaskNet = nullptr, gTaskUi = nullptr, gTaskDiag = nullptr;
++
+ static SemaphoreHandle_t sMutex = nullptr;
+ static NvConfig sConfig;
+ 
+diff -ruN --label v1.0.0 --label v1.1.0 v1.0.0 v1.1.0
+--- v1.0.0
++++ v1.1.0
+@@ -2,6 +2,7 @@
+ #include <Arduino.h>
+ #include "freertos/FreeRTOS.h"
+ #include "freertos/semphr.h"
++#include "freertos/task.h"
+ #include "nv_types.h"
+ 
+ // Shared state between tasks (ADC/detection, network, BLE, alarm/UI)
+@@ -18,6 +19,14 @@
+ extern volatile uint8_t gBatteryPct;
+ extern volatile bool gChannelOk[3];
+ 
++// Boot diagnostics
++extern bool gSafeMode;              // booted in crash-loop safe mode
++extern char gLastReset[20];         // reset reason of this boot, e.g. "POWERON", "PANIC"
++extern uint32_t gCrashCount;        // consecutive abnormal resets
++
++// Task handles (for stack high-water-mark reports)
++extern TaskHandle_t gTaskAdc, gTaskEvt, gTaskNet, gTaskUi, gTaskDiag;
++
+ void nvStateBegin();
+ void nvLock();
+ void nvUnlock();

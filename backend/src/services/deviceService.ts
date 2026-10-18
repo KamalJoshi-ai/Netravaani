@@ -18,6 +18,7 @@ export interface RegisterDeviceDto {
   hardwareIdVerified?: boolean;
   firmwareVersion?: string;
   isDevRegistration: boolean;
+  registeredBy?: string;
 }
 
 export interface UpdateDeviceDto {
@@ -30,6 +31,7 @@ export interface RegisterEsp32DeviceDto {
   name?: string;
   firmwareVersion?: string;
   registrationSource?: "ESP32_WIFI";
+  registeredBy?: string;
 }
 
 export interface HeartbeatDto {
@@ -72,6 +74,7 @@ export class DeviceService {
       hardwareIdVerified: Boolean(data.hardwareIdVerified),
       firmwareVersion: data.firmwareVersion || undefined,
       isDevRegistration: data.isDevRegistration,
+      registeredBy: data.registeredBy || undefined,
       status: "AVAILABLE",
       connectivityStatus: "NEVER_SEEN",
     });
@@ -100,6 +103,10 @@ export class DeviceService {
         existing.firmwareVersion = data.firmwareVersion;
         needsSave = true;
       }
+      if (data.registeredBy && !existing.registeredBy) {
+        existing.registeredBy = data.registeredBy;
+        needsSave = true;
+      }
       if (needsSave) {
         await existing.save();
       }
@@ -122,6 +129,7 @@ export class DeviceService {
       firmwareVersion: data.firmwareVersion || undefined,
       isDevRegistration: false,
       registrationSource: "ESP32_WIFI",
+      registeredBy: data.registeredBy || undefined,
       status: "AVAILABLE",
       connectivityStatus: "NEVER_SEEN", // Remains NEVER_SEEN until authoritative heartbeat
     });
@@ -179,6 +187,7 @@ export class DeviceService {
     name?: string;
     firmwareVersion?: string;
     ipAddress?: string;
+    registeredBy?: string;
   }) {
     // 1. Provision or retrieve device
     const { device, isNew } = await this.registerEsp32Device({
@@ -186,6 +195,7 @@ export class DeviceService {
       name: data.name,
       firmwareVersion: data.firmwareVersion || "v1.2.0-esp32",
       registrationSource: "ESP32_WIFI",
+      registeredBy: data.registeredBy,
     });
 
     // 2. Transmit initial heartbeat to transition device ONLINE immediately
@@ -214,11 +224,15 @@ export class DeviceService {
     page = 1,
     limit = 20,
     status?: DeviceStatus,
-    connectivityStatus?: DeviceConnectivityStatus
+    connectivityStatus?: DeviceConnectivityStatus,
+    registeredBy?: string
   ) {
     const filter: Record<string, unknown> = {};
     if (status) {
       filter.status = status;
+    }
+    if (registeredBy) {
+      filter.registeredBy = registeredBy;
     }
 
     const skip = (page - 1) * limit;

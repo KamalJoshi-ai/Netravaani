@@ -21,6 +21,7 @@ export interface IDevice extends Document {
   isDevRegistration: boolean;
   registrationSource?: "DEV_MANUAL" | "ESP32_WIFI";
   silenceAlarmPending?: boolean;
+  registeredBy?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -95,6 +96,11 @@ const DeviceSchema = new Schema<IDevice>(
     silenceAlarmPending: {
       type: Boolean,
       default: false,
+    },
+    registeredBy: {
+      type: String,
+      trim: true,
+      index: true,
     },
   },
   {

@@ -12,7 +12,17 @@ export const getCookieOptions = (): CookieOptions => {
 
 export const clearAuthCookies = (res: Response): void => {
   const baseOptions = getCookieOptions();
-  res.clearCookie("access_token", baseOptions);
-  res.clearCookie("refresh_token", baseOptions);
+  const expireOptions: CookieOptions = {
+    ...baseOptions,
+    expires: new Date(0),
+    maxAge: 0,
+  };
+  res.clearCookie("access_token", expireOptions);
+  res.clearCookie("access_token", { path: "/" });
+  res.clearCookie("refresh_token", expireOptions);
+  res.clearCookie("refresh_token", { path: "/" });
+  res.clearCookie("netravaani_token", expireOptions);
   res.clearCookie("netravaani_token", { path: "/" });
+  res.clearCookie("patient_token", expireOptions);
+  res.clearCookie("patient_token", { path: "/" });
 };

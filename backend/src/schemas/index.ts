@@ -23,6 +23,7 @@ export const devRegisterDeviceSchema = z.object({
   hardwareId: z.string().trim().min(3).max(64).regex(HARDWARE_ID_REGEX, "hardwareId must contain only alphanumeric characters, colons, hyphens, or underscores").optional(),
   hardwareIdVerified: z.boolean().default(false).optional(),
   firmwareVersion: z.string().trim().max(30).optional(),
+  registeredBy: z.string().trim().optional(),
   isDevRegistration: z.literal(true, {
     errorMap: () => ({
       message: "Direct registration endpoint is for development/test purposes only and requires isDevRegistration: true",
@@ -34,6 +35,7 @@ export const esp32RegisterDeviceSchema = z.object({
   hardwareId: hardwareIdValidator,
   name: z.string().trim().min(2, "Device name must be at least 2 characters").max(60).optional(),
   firmwareVersion: z.string().trim().max(30).optional(),
+  registeredBy: z.string().trim().optional(),
   registrationSource: z.literal("ESP32_WIFI").optional(),
   isDevRegistration: z.literal(false).optional(),
 });
@@ -50,6 +52,7 @@ export const listDevicesQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(100).default(20),
   status: z.enum(DeviceStatusEnum).optional(),
   connectivityStatus: z.enum(DeviceConnectivityStatusEnum).optional(),
+  registeredBy: z.string().trim().optional(),
 });
 
 // Device Configuration Acknowledgement Schema

@@ -3,6 +3,7 @@ import jwt from "jsonwebtoken";
 import crypto from "crypto";
 
 import User from "../models/User.js";
+import { Patient } from "../models/Patient.js";
 import { response } from "../utils/responsehandler.js";
 import { sendVerificationToEmail } from "../config/emailConfig.js";
 import { generateAccessToken } from "../utils/generateToken.js";
@@ -41,22 +42,6 @@ function setAccessCookie(res: Response, token: string): void {
   });
 }
 
-const generateUniqueReferralCode = async (): Promise<string> => {
-  let referralCode: string;
-  let exists = true;
-
-  while (exists) {
-    referralCode = crypto
-      .randomBytes(6)
-      .toString("hex")
-      .toUpperCase();
-
-    exists = !!(await User.exists({ referralCode }));
-  }
-
-  return referralCode!;
-};
-
 // ─── register ────────────────────────────────────────────────────────────────
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
@@ -68,7 +53,8 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  logger.info("Register attempt", { email: normalizedEmail, requestId: reqId });
+  const normalizedRole = role === "patient" ? "patient" : (role || (isSeller ? "seller" : "nurse"));
+  logger.info("Register attempt", { email: normalizedEmail, role: normalizedRole, requestId: reqId });
 
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
@@ -78,7 +64,6 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
 
   const plainToken = crypto.randomBytes(32).toString("hex");
   const hashedToken = hashToken(plainToken);
-  const referralCode = await generateUniqueReferralCode();
   const derivedUsername = (req.body.username || normalizedEmail.split("@")[0]).trim().toLowerCase();
 
   const user = await User.create({
@@ -86,12 +71,43 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     email: normalizedEmail,
     username: derivedUsername,
     password,
-    role: role || (isSeller ? "seller" : "nurse"),
-    referralCode,
+    role: normalizedRole,
     verificationToken: hashedToken,
     verificationTokenExpires: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
     isVerified: false,
   });
+
+  // If registering as patient, ensure a corresponding clinical Patient document exists
+  if (normalizedRole === "patient") {
+    try {
+      const cleanCode = (derivedUsername.length >= 4 ? derivedUsername : `PT-${Math.floor(100000 + Math.random() * 900000)}`).toUpperCase();
+      user.patientCode = cleanCode;
+      await user.save();
+
+      const existingPatient = await Patient.findOne({
+        $or: [{ patientCode: cleanCode }, { email: normalizedEmail }, { displayName: name }],
+      });
+      if (!existingPatient) {
+        await Patient.create({
+          patientCode: cleanCode,
+          displayName: name,
+          email: normalizedEmail,
+          userId: user._id,
+          status: "ACTIVE",
+          password,
+          nurseAssignment: { status: "NONE" },
+        });
+        logger.info("Auto-provisioned patient record", { patientCode: cleanCode, displayName: name, email: normalizedEmail });
+      } else {
+        existingPatient.email = normalizedEmail;
+        existingPatient.userId = user._id;
+        if (!existingPatient.patientCode) existingPatient.patientCode = cleanCode;
+        await existingPatient.save();
+      }
+    } catch (ptErr) {
+      logger.warn("Auto-provisioning patient record warning", { error: ptErr });
+    }
+  }
 
   try {
     await sendVerificationToEmail(user.email, plainToken);
@@ -116,6 +132,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      patientCode: user.patientCode,
       isVerified: user.isVerified,
     },
   });
@@ -202,7 +219,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError("Invalid email or password", 401);
   }
 
-  // Check email verification (seed default accounts with username nurse/admin bypass or auto-verify)
+  // Check email verification
   if (!user.isVerified && user.email) {
     if (user.verificationTokenExpires && user.verificationTokenExpires.getTime() < Date.now()) {
       const plainToken = crypto.randomBytes(32).toString("hex");
@@ -221,7 +238,47 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       }
       throw new AppError("Verification link expired. A new verification email has been sent.", 403);
     }
-    throw new AppError("Please verify your email first", 403);
+    throw new AppError("Please verify your email first , check your inbox", 403);
+  }
+
+  // If logging in as patient, ensure a corresponding Patient document exists and is linked
+  if (user.role === "patient") {
+    try {
+      let patient = await Patient.findOne({
+        $or: [
+          { email: user.email },
+          { userId: user._id },
+          ...(user.patientCode ? [{ patientCode: user.patientCode }] : []),
+          { displayName: user.name },
+        ],
+      });
+      if (!patient) {
+        const cleanCode = (user.patientCode || user.username || `PT-${Math.floor(100000 + Math.random() * 900000)}`).toUpperCase();
+        patient = await Patient.create({
+          patientCode: cleanCode,
+          displayName: user.name,
+          email: user.email,
+          userId: user._id,
+          status: "ACTIVE",
+          password: "patient123",
+          nurseAssignment: { status: "NONE" },
+        });
+        logger.info("Auto-provisioned patient record on login", { patientCode: cleanCode, displayName: user.name });
+      }
+      if (patient) {
+        if (!user.patientCode || user.patientCode !== patient.patientCode) {
+          user.patientCode = patient.patientCode;
+          await user.save();
+        }
+        if (!patient.email || patient.email !== user.email || !patient.userId) {
+          patient.email = user.email;
+          patient.userId = user._id;
+          await patient.save();
+        }
+      }
+    } catch (ptErr) {
+      logger.warn("Auto-provisioning patient record on login warning", { error: ptErr });
+    }
   }
 
   const accessToken = generateAccessToken(user);
@@ -236,6 +293,7 @@ export const login = asyncHandler(async (req: Request, res: Response) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      patientCode: user.patientCode,
       profilePicture: user.profilePicture,
       isVerified: user.isVerified,
     },

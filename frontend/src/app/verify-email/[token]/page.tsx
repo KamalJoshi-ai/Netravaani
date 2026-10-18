@@ -57,29 +57,29 @@ export default function VerifyEmailPage() {
   }, [token, refreshAuth]);
 
   return (
-    <div className="min-h-screen bg-[#F5F0E8] text-[#30251F] flex flex-col justify-center py-16 px-4 sm:px-6 lg:px-8 selection:bg-[#EED9CD]">
+    <div className="min-h-screen bg-[#F5F0E8] text-[#140D07] flex flex-col justify-center py-16 px-4 sm:px-6 lg:px-8 selection:bg-[#EED9CD]">
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
-        <div className="inline-flex items-center gap-2 border-b border-[#E7DFD4] pb-1 mb-2">
-          <span className="text-[10px] uppercase font-mono tracking-widest text-[#75665D]">
+        <div className="inline-flex items-center gap-2 border-b border-[#DCD0C2] pb-1 mb-2">
+          <span className="text-[10px] uppercase font-mono tracking-widest text-[#2E1F17]">
             Official Verification Dispatch
           </span>
         </div>
-        <h1 className="font-serif text-4xl font-normal text-[#30251F] tracking-tight">NetraVaani</h1>
-        <p className="font-serif italic text-sm text-[#75665D]">
+        <h1 className="font-serif text-4xl font-bold text-[#140D07] tracking-tight">NetraVaani</h1>
+        <p className="font-serif italic text-sm text-[#2E1F17]">
           Account Authentication &bull; Medical Staff Onboarding
         </p>
       </div>
 
       <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-[#FFFCF7] py-8 px-6 sm:px-10 rounded-2xl border border-[#E7DFD4] shadow-sm text-center">
+        <div className="bg-[#FFFCF7] py-8 px-6 sm:px-10 rounded-2xl border border-[#DCD0C2] shadow-sm text-center">
           {loading ? (
             <div className="py-8 space-y-4">
               <div className="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-[#C56845]"></div>
-              <p className="font-serif italic text-sm text-[#75665D]">{message}</p>
+              <p className="font-serif italic text-sm text-[#2E1F17]">{message}</p>
             </div>
           ) : success ? (
             <div className="py-4 space-y-5">
-              <div className="p-4 bg-[#EED9CD]/60 border border-[#C56845]/40 text-[#30251F] rounded-xl text-sm font-medium">
+              <div className="p-4 bg-[#EED9CD]/60 border border-[#C56845]/40 text-[#140D07] rounded-xl text-sm font-bold">
                 {message}
               </div>
               <button
@@ -92,13 +92,13 @@ export default function VerifyEmailPage() {
             </div>
           ) : (
             <div className="py-4 space-y-5">
-              <div className="p-4 bg-[#F9ECE7] border border-[#C56845]/50 text-[#8C3A1E] rounded-xl text-sm font-medium">
+              <div className="p-4 bg-[#F9ECE7] border border-[#C56845]/50 text-[#8C3A1E] rounded-xl text-sm font-bold">
                 {message}
               </div>
               <button
                 type="button"
                 onClick={() => router.push("/")}
-                className="w-full flex justify-center py-2.5 px-4 border border-[#E7DFD4] rounded-xl text-xs uppercase tracking-wider font-semibold text-[#75665D] bg-[#FFFCF7] hover:bg-[#F5F0E8] transition"
+                className="w-full flex justify-center py-2.5 px-4 border border-[#DCD0C2] rounded-xl text-xs uppercase tracking-wider font-semibold text-[#2E1F17] bg-[#FFFCF7] hover:bg-[#F5F0E8] transition"
               >
                 Back to Sign In
               </button>

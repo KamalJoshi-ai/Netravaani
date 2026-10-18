@@ -6,6 +6,8 @@ import {
   patientLogin,
   getPatientMe,
   requestNurse,
+  allocateNurse,
+  deallocateNurse,
   approveNurse,
   rejectNurse,
   triggerCommand,
@@ -16,25 +18,16 @@ import { Patient } from "../models/Patient.js";
 
 export const patientRouter = Router();
 
-async function ensureDefaultPatients() {
-  const count = await Patient.countDocuments();
-  if (count === 0) {
-    await Patient.create({
-      patientCode: "PT-101001",
-      displayName: "Eleanor Vance",
-      bedLabel: "ICU-Bed-04",
-      status: "ACTIVE",
-      password: "patient123",
-      nurseAssignment: { status: "NONE" },
-    });
-  }
-}
-
+// Clean up any previously seeded fake demo patient from the database
+let cleanedUp = false;
 patientRouter.use(async (_req, _res, next) => {
-  try {
-    await ensureDefaultPatients();
-  } catch {
-    // ignore
+  if (!cleanedUp) {
+    try {
+      await Patient.deleteMany({ patientCode: "PT-101001" });
+      cleanedUp = true;
+    } catch {
+      // ignore if DB not ready
+    }
   }
   next();
 });
@@ -51,8 +44,10 @@ patientRouter.post("/", createPatient);
 patientRouter.get("/", listPatients);
 patientRouter.get("/:patientCode", getPatient);
 
-// Nurse Assignment Workflow (Request by Nurse -> Approval by Patient)
+// Nurse Assignment Workflow (Allocate by Nurse, Request, Approve, Deallocate)
 patientRouter.post("/:patientCode/request-nurse", requestNurse);
+patientRouter.post("/:patientCode/allocate-nurse", allocateNurse);
+patientRouter.post("/:patientCode/deallocate-nurse", deallocateNurse);
 patientRouter.post("/:patientCode/approve-nurse", approveNurse);
 patientRouter.post("/:patientCode/reject-nurse", rejectNurse);
 

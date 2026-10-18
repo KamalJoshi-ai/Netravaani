@@ -1,6 +1,7 @@
 import { customAlphabet } from "nanoid";
 import jwt from "jsonwebtoken";
 import { Patient, IPatient, PatientStatus } from "../models/Patient.js";
+import User from "../models/User.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
 import { CareRequest } from "../models/CareRequest.js";
 import { AppError } from "../middleware/errorHandler.js";
@@ -133,7 +134,36 @@ export class PatientService {
   }
 
   async getPatientByCode(patientCode: string) {
-    const patient = await Patient.findOne({ patientCode }).lean();
+    const trimmed = (patientCode || "").trim();
+    let patient = await Patient.findOne({
+      $or: [
+        { patientCode: trimmed },
+        { patientCode: trimmed.toUpperCase() },
+        { email: trimmed.toLowerCase() },
+        { displayName: new RegExp(`^${trimmed}$`, "i") },
+      ],
+    }).lean();
+
+    if (!patient) {
+      const user = await User.findOne({
+        $or: [
+          { email: trimmed.toLowerCase() },
+          { username: trimmed.toLowerCase() },
+          { name: new RegExp(`^${trimmed}$`, "i") },
+        ],
+      });
+      if (user) {
+        patient = await Patient.findOne({
+          $or: [
+            ...(user.patientCode ? [{ patientCode: user.patientCode }] : []),
+            { email: user.email },
+            { userId: user._id },
+            { displayName: user.name },
+          ],
+        }).lean();
+      }
+    }
+
     if (!patient) {
       throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
     }
@@ -154,16 +184,68 @@ export class PatientService {
 
   // Patient Authentication
   async patientLogin(patientCode: string, passwordCandidate: string) {
-    const trimmedCode = (patientCode || "").trim().toUpperCase();
-    const patient = await Patient.findOne({ patientCode: trimmedCode }).select("+password");
+    const trimmedCode = (patientCode || "").trim();
+    let patient = await Patient.findOne({
+      $or: [
+        { patientCode: trimmedCode },
+        { patientCode: trimmedCode.toUpperCase() },
+        { email: trimmedCode.toLowerCase() },
+        { displayName: new RegExp(`^${trimmedCode}$`, "i") },
+      ],
+    }).select("+password");
+
+    let userMatched = false;
+    if (!patient) {
+      const user = await User.findOne({
+        $or: [
+          { email: trimmedCode.toLowerCase() },
+          { username: trimmedCode.toLowerCase() },
+          { patientCode: trimmedCode.toUpperCase() },
+        ],
+      }).select("+password +passwordHash");
+
+      if (user) {
+        const isUserPassCorrect =
+          (await user.comparePassword(passwordCandidate)) ||
+          (passwordCandidate.trim() !== passwordCandidate && (await user.comparePassword(passwordCandidate.trim())));
+        if (isUserPassCorrect) {
+          userMatched = true;
+          patient = await Patient.findOne({
+            $or: [
+              ...(user.patientCode ? [{ patientCode: user.patientCode }] : []),
+              { email: user.email },
+              { userId: user._id },
+              { displayName: user.name },
+            ],
+          }).select("+password");
+
+          if (!patient) {
+            const cleanCode = (user.patientCode || `PT-${Math.floor(100000 + Math.random() * 900000)}`).toUpperCase();
+            patient = await Patient.create({
+              patientCode: cleanCode,
+              displayName: user.name,
+              email: user.email,
+              userId: user._id,
+              status: "ACTIVE",
+              password: passwordCandidate,
+              nurseAssignment: { status: "NONE" },
+            });
+            user.patientCode = cleanCode;
+            await user.save();
+          }
+        }
+      }
+    }
 
     if (!patient) {
       throw new AppError(401, "INVALID_CREDENTIALS", "Invalid Patient ID or Password");
     }
 
-    const isMatch = await patient.comparePassword(passwordCandidate);
-    if (!isMatch) {
-      throw new AppError(401, "INVALID_CREDENTIALS", "Invalid Patient ID or Password");
+    if (!userMatched) {
+      const isMatch = await patient.comparePassword(passwordCandidate);
+      if (!isMatch) {
+        throw new AppError(401, "INVALID_CREDENTIALS", "Invalid Patient ID or Password");
+      }
     }
 
     // Generate lightweight JWT token for bedside patient terminal
@@ -208,8 +290,8 @@ export class PatientService {
     return this.getPatientByCode(patientCode);
   }
 
-  // Patient Approves Nurse Request
-  async approveNurseAssignment(patientCode: string) {
+  // Patient Approves Nurse Request (with optional Bed Number)
+  async approveNurseAssignment(patientCode: string, bedLabel?: string) {
     const patient = await Patient.findOne({ patientCode });
     if (!patient) {
       throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
@@ -225,6 +307,58 @@ export class PatientService {
 
     patient.nurseAssignment.status = "APPROVED";
     patient.nurseAssignment.approvedAt = new Date();
+
+    if (bedLabel && typeof bedLabel === "string" && bedLabel.trim()) {
+      patient.bedLabel = bedLabel.trim();
+    }
+
+    await patient.save();
+    return this.getPatientByCode(patientCode);
+  }
+
+  // Nurse Directly Allocates Patient by Herself
+  async allocateNurse(
+    patientCode: string,
+    nurseData: { nurseId?: string; nurseName: string; nurseRole?: string; bedLabel?: string }
+  ) {
+    const patient = await Patient.findOne({ patientCode });
+    if (!patient) {
+      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    }
+
+    patient.nurseAssignment = {
+      nurseId: (nurseData.nurseId as any) || undefined,
+      nurseName: nurseData.nurseName,
+      nurseRole: nurseData.nurseRole || "nurse",
+      requestedAt: new Date(),
+      approvedAt: new Date(),
+      status: "APPROVED",
+    };
+
+    if (nurseData.bedLabel && typeof nurseData.bedLabel === "string" && nurseData.bedLabel.trim()) {
+      patient.bedLabel = nurseData.bedLabel.trim();
+    }
+
+    await patient.save();
+    return this.getPatientByCode(patientCode);
+  }
+
+  // Nurse Deallocates Patient by Herself
+  async deallocateNurse(patientCode: string) {
+    const patient = await Patient.findOne({ patientCode });
+    if (!patient) {
+      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    }
+
+    patient.nurseAssignment = {
+      nurseId: undefined,
+      nurseName: undefined,
+      nurseRole: undefined,
+      requestedAt: undefined,
+      approvedAt: undefined,
+      rejectedAt: undefined,
+      status: "NONE",
+    };
 
     await patient.save();
     return this.getPatientByCode(patientCode);

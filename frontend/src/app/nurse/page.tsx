@@ -2,31 +2,42 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   apiClient,
   CareRequestItem,
   CareRequestStatus,
+  DeviceItem,
   PatientItem,
   PredefinedCommandItem,
 } from "@/lib/api";
 import {
-  RefreshCw,
+  Radio,
+  Wifi,
+  Cpu,
+  Bed,
   CheckCircle2,
   AlertTriangle,
-  X,
   Clock,
-  Bed,
   Check,
-  Play,
   Search,
-  SlidersHorizontal,
-  ChevronRight,
-  ArrowLeft,
+  ChevronDown,
+  ArrowRight,
+  ArrowUpRight,
+  Shield,
+  Activity,
+  Bluetooth,
+  RefreshCw,
+  LogOut,
+  Wrench,
+  User,
   UserPlus,
-  Radio,
+  X,
+  FileText,
 } from "@/lib/noIcons";
 import { useAuth } from "@/lib/auth";
 import LoginForm from "@/components/LoginForm";
+import BleCommissioningModal from "@/components/BleCommissioningModal";
 
 interface StepConfirmData {
   request: CareRequestItem;
@@ -37,187 +48,142 @@ interface StepConfirmData {
   actionButtonColor: string;
 }
 
-const ACTION_CONFIG: Record<
-  string,
+// 5 Predefined Clinical Firmware Commands (Hardware calibrated)
+const PREDEFINED_COMMANDS = [
   {
-    label: string;
-    badge: string;
-    border: string;
-    bgTint: string;
-    gestureDescription: string;
-    serial: string;
-  }
-> = {
-  YES: {
-    label: "YES",
-    badge: "bg-[#E8E2D7] text-[#1C140F] border-[#D6C7B7] font-bold",
-    border: "border-[#D6C7B7]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "2 blinks, wait",
+    action: "YES",
+    gesture: "2 blinks, wait",
     serial: "[cmd] YES",
+    dashboard: "YES",
+    instruction: "Blink twice and pause to confirm affirmative / YES",
   },
-  WATER: {
-    label: "WATER",
-    badge: "bg-[#EED9CD] text-[#7A361E] border-[#D6C7B7] font-bold",
-    border: "border-[#D6C7B7]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "4+ blinks",
+  {
+    action: "WATER",
+    gesture: "4+ blinks",
     serial: "[cmd] WATER",
+    dashboard: "WATER",
+    instruction: "Blink 4 or more rapid times to request drinking water",
   },
-  NO: {
-    label: "NO",
-    badge: "bg-[#F4DFC8] text-[#8C4318] border-[#DFBA9C] font-bold",
-    border: "border-[#DFBA9C]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "Squeeze both hands together, once",
+  {
+    action: "NO",
+    gesture: "Squeeze both hands together, once",
     serial: "[cmd] NO",
+    dashboard: "NO",
+    instruction: "Squeeze both hands together once firmly to indicate negative / NO",
   },
-  CALL_NURSE: {
-    label: "CALL NURSE",
-    badge: "bg-[#E5DFD7] text-[#1C140F] border-[#CEBEB0] font-bold",
-    border: "border-[#CEBEB0]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "Squeeze left hand 3 times",
+  {
+    action: "CALL_NURSE",
+    gesture: "Squeeze left hand 3 times",
     serial: "[cmd] CALL NURSE",
+    dashboard: "CALL NURSE",
+    instruction: "Squeeze left hand 3 times to summon bedside nurse",
   },
-  EMERGENCY: {
-    label: "EMERGENCY, LEDs 1–4 flash red",
-    badge: "bg-[#C56845] text-[#FFFCF7] border-[#A84A29] font-black",
-    border: "border-[#C56845]",
-    bgTint: "bg-[#EED9CD]/35",
-    gestureDescription: "Squeeze both hands together, 3 times",
+  {
+    action: "EMERGENCY",
+    gesture: "Squeeze both hands together, 3 times",
     serial: "[cmd] EMERGENCY / SEVERE PAIN",
+    dashboard: "EMERGENCY, LEDs 1–4 flash red",
+    instruction: "Squeeze both hands together 3 times for acute clinical emergency",
   },
-  // Legacy action fallbacks:
-  NEED_WATER: {
-    label: "WATER",
-    badge: "bg-[#EED9CD] text-[#7A361E] border-[#D6C7B7] font-bold",
-    border: "border-[#D6C7B7]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "4+ blinks",
-    serial: "[cmd] WATER",
-  },
-  NEED_ASSISTANCE: {
-    label: "CALL NURSE",
-    badge: "bg-[#E8E2D7] text-[#1C140F] border-[#D6C7B7] font-bold",
-    border: "border-[#D6C7B7]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "Squeeze left hand 3 times",
-    serial: "[cmd] CALL NURSE",
-  },
-  PAIN_DISCOMFORT: {
-    label: "PAIN / DISCOMFORT",
-    badge: "bg-[#F4DFC8] text-[#8C4318] border-[#DFBA9C] font-bold",
-    border: "border-[#DFBA9C]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "Eyebrow Raise (2s)",
-    serial: "[cmd] PAIN",
-  },
-  REPOSITION: {
-    label: "REPOSITION",
-    badge: "bg-[#E5DFD7] text-[#1C140F] border-[#CEBEB0] font-bold",
-    border: "border-[#CEBEB0]",
-    bgTint: "bg-[#FFFCF7]",
-    gestureDescription: "Head Nod Up",
-    serial: "[cmd] REPOSITION",
-  },
-};
+];
 
 export default function NurseDashboardPage() {
+  const router = useRouter();
   const { user, loading: authLoading, logout } = useAuth();
   const [requests, setRequests] = useState<CareRequestItem[]>([]);
+  const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [patients, setPatients] = useState<PatientItem[]>([]);
   const [commandsList, setCommandsList] = useState<PredefinedCommandItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "calls" | "patients" | "devices" | "history">("overview");
   const [filter, setFilter] = useState<"ALL" | CareRequestStatus>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
-  const [selectedRequest, setSelectedRequest] = useState<CareRequestItem | null>(null);
+  const [isBleModalOpen, setIsBleModalOpen] = useState(false);
+  const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<DeviceItem | null>(null);
 
-  // In-place confirmation dialog state (does NOT jump to top)
+  // In-place confirmation dialog state (does NOT jump to top of page)
   const [stepConfirm, setStepConfirm] = useState<StepConfirmData | null>(null);
   const [actionLoadingMap, setActionLoadingMap] = useState<Record<string, boolean>>({});
   const [nurseAssignLoading, setNurseAssignLoading] = useState<Record<string, boolean>>({});
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [toastIsError, setToastIsError] = useState(false);
 
-  // Floating Toast notifications (bottom-right so page layout height never shifts)
-  const [toastMsg, setToastMsg] = useState<{ text: string; isError?: boolean } | null>(null);
-
-  const showToast = (text: string, isError = false) => {
-    setToastMsg({ text, isError });
+  // Show toast notification
+  const showToast = useCallback((msg: string, isError = false) => {
+    setToastMessage(msg);
+    setToastIsError(isError);
     setTimeout(() => {
-      setToastMsg((cur) => (cur?.text === text ? null : cur));
-    }, 4500);
-  };
+      setToastMessage(null);
+    }, 4000);
+  }, []);
 
-  const fetchRequests = useCallback(async (isManual = false) => {
-    if (isManual) setRefreshing(true);
+  // Fetch Care Requests
+  const fetchRequests = useCallback(async (showIndicator = false) => {
+    if (showIndicator) setRefreshing(true);
     try {
-      const res = await apiClient.getCareRequests();
-      setRequests(res.data);
-      if (isManual) {
-        showToast("Care requests refreshed successfully.");
+      const res = await apiClient.getCareRequests({ limit: 100 });
+      if (res.data) {
+        setRequests(res.data);
       }
     } catch (err: unknown) {
-      if (isManual) {
-        showToast(
-          err instanceof Error ? err.message : "Failed to load requests from backend",
-          true
-        );
-      }
+      console.error("Failed to load care requests:", err);
     } finally {
-      setLoading(false);
-      setRefreshing(false);
+      if (showIndicator) setRefreshing(false);
     }
   }, []);
 
-  const fetchPatientsAndCommands = useCallback(async () => {
+  // Fetch Patients, Devices, Commands (Filtered strictly to current nurse's registered devices)
+  const fetchAuxData = useCallback(async () => {
     try {
-      const [ptRes, cmdRes] = await Promise.all([
-        apiClient.getPatients(),
-        apiClient.getPredefinedCommands().catch(() => ({ data: [] })),
+      const currentNurse = (user?.email || user?.username || user?.name || "").trim();
+      const [ptsRes, devsRes, cmdsRes] = await Promise.allSettled([
+        apiClient.getPatients({ limit: 50 }),
+        apiClient.getDevices({ limit: 50, registeredBy: currentNurse || undefined }),
+        apiClient.getPredefinedCommands(),
       ]);
-      setPatients(ptRes.data);
-      if (cmdRes.data?.length) {
-        setCommandsList(cmdRes.data);
+
+      if (ptsRes.status === "fulfilled" && ptsRes.value.data) {
+        setPatients(ptsRes.value.data);
       }
-    } catch {
-      // Background fetch
+      if (devsRes.status === "fulfilled" && devsRes.value.data) {
+        // Multi-tenant nurse device isolation:
+        // A device registered by nurse A MUST NOT appear for nurse B.
+        const visibleDevices = currentNurse
+          ? devsRes.value.data.filter(
+              (d) =>
+                !d.registeredBy ||
+                d.registeredBy === currentNurse ||
+                d.registeredBy === user?.email ||
+                d.registeredBy === user?.username ||
+                d.registeredBy === user?.name ||
+                d.registeredBy === user?.id
+            )
+          : devsRes.value.data;
+        setDevices(visibleDevices);
+      }
+      if (cmdsRes.status === "fulfilled" && cmdsRes.value.data) {
+        setCommandsList(cmdsRes.value.data);
+      }
+    } catch (err) {
+      console.error("Failed to fetch aux clinical data:", err);
+    } finally {
+      setLoading(false);
     }
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     fetchRequests(false);
-    fetchPatientsAndCommands();
+    fetchAuxData();
 
-    // Silent background poll every 2.5s without jumping or refreshing screen
+    // Silent background telemetry polling every 3s without jumping viewport
     const interval = setInterval(() => {
       fetchRequests(false);
-      fetchPatientsAndCommands();
-    }, 2500);
+      fetchAuxData();
+    }, 3000);
 
     return () => clearInterval(interval);
-  }, [fetchRequests, fetchPatientsAndCommands]);
-
-  // Request assignment of nurse to patient
-  const handleRequestPatientAssignment = async (patientCode: string) => {
-    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
-    try {
-      await apiClient.requestNurseAssignment(patientCode, {
-        nurseName: user?.name || "Nurse on Duty",
-        nurseId: user?.email || user?.name || "nurse",
-        nurseRole: user?.role || "NURSE",
-      });
-      showToast(`Assignment request sent to patient ${patientCode}. Awaiting bedside approval.`);
-      fetchPatientsAndCommands();
-    } catch (err: unknown) {
-      showToast(
-        err instanceof Error ? err.message : "Failed to request patient assignment",
-        true
-      );
-    } finally {
-      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
-    }
-  };
+  }, [fetchRequests, fetchAuxData]);
 
   // Open the in-place confirmation dialog for a specific step
   const promptStepConfirmation = (
@@ -231,39 +197,39 @@ export default function NurseDashboardPage() {
       setStepConfirm({
         request: req,
         nextStep: "ACKNOWLEDGED",
-        stepTitle: "Confirm Next Step: Acknowledge Request",
-        stepDescription: `Acknowledge bedside request for ${patientDisplay} (${bedDisplay})? This confirms to the station and bedside unit that nursing staff has registered the call.`,
-        actionButtonLabel: "Confirm Acknowledgement",
-        actionButtonColor: "bg-[#C56845] hover:bg-[#B05534] text-[#FFFCF7]",
+        stepTitle: "Confirm Acknowledgment",
+        stepDescription: `Acknowledge bedside alert from ${patientDisplay} (${bedDisplay})? This confirms to the station that nursing staff is attending.`,
+        actionButtonLabel: "Acknowledge Call",
+        actionButtonColor: "bg-[#AD5D3D] hover:bg-[#964F33] text-white",
       });
     } else if (nextStep === "IN_PROGRESS") {
       setStepConfirm({
         request: req,
         nextStep: "IN_PROGRESS",
-        stepTitle: "Confirm Next Step: Start Handling (In Progress)",
-        stepDescription: `Mark this request as In-Progress for ${patientDisplay} (${bedDisplay})? This notifies all staff that you are actively responding.`,
-        actionButtonLabel: "Confirm In-Progress",
-        actionButtonColor: "bg-[#EED9CD] hover:bg-[#DFBA9C] text-[#7A361E] border border-[#D6C7B7]",
+        stepTitle: "Confirm: In-Progress Response",
+        stepDescription: `Mark call as In-Progress for ${patientDisplay} (${bedDisplay})? This records your bedside intervention.`,
+        actionButtonLabel: "Start Handling",
+        actionButtonColor: "bg-[#2B6CB0] hover:bg-[#23588F] text-white",
       });
     } else if (nextStep === "RESOLVED") {
       setStepConfirm({
         request: req,
         nextStep: "RESOLVED",
-        stepTitle: "Confirm Next Step: Resolve Care Request",
-        stepDescription: `Mark this bedside care request as Resolved for ${patientDisplay} (${bedDisplay})? This will complete the clinical care lifecycle record.`,
-        actionButtonLabel: "Confirm Resolution",
-        actionButtonColor: "bg-[#30251F] hover:bg-[#45362E] text-[#FFFCF7]",
+        stepTitle: "Confirm: Complete & Resolve",
+        stepDescription: `Mark this care event as Resolved for ${patientDisplay} (${bedDisplay})? This closes the telemetry event.`,
+        actionButtonLabel: "Resolve Call",
+        actionButtonColor: "bg-[#42765A] hover:bg-[#355F49] text-white",
       });
     }
   };
 
-  // Execute confirmation in-place WITHOUT jumping to top
+  // Execute confirmation in-place WITHOUT jumping to top of page
   const handleConfirmNextStep = async () => {
     if (!stepConfirm) return;
     const { request, nextStep } = stepConfirm;
     const reqId = request._id;
 
-    // Capture exact viewport scroll position to guarantee the page stays right there
+    // Capture exact viewport scroll position so the user stays right there
     const savedScrollY = typeof window !== "undefined" ? window.scrollY : 0;
     setActionLoadingMap((prev) => ({ ...prev, [reqId]: true }));
 
@@ -276,7 +242,7 @@ export default function NurseDashboardPage() {
       } else if (nextStep === "IN_PROGRESS") {
         const res = await apiClient.startHandlingCareRequest(reqId);
         updatedRes = res.data;
-        showToast(`Request moved to In-Progress for ${request.patient?.displayName || "Patient"}.`);
+        showToast(`Moved to In-Progress for ${request.patient?.displayName || "Patient"}.`);
       } else if (nextStep === "RESOLVED") {
         const res = await apiClient.resolveCareRequest(reqId);
         updatedRes = res.data;
@@ -285,95 +251,160 @@ export default function NurseDashboardPage() {
 
       if (updatedRes) {
         setRequests((prev) => prev.map((r) => (r._id === reqId ? updatedRes! : r)));
-        if (selectedRequest?._id === reqId) {
-          setSelectedRequest(updatedRes);
-        }
       }
 
       setStepConfirm(null);
 
-      // Restore scroll position instantly so the user does NOT get pulled to top of page
+      // Restore scroll position instantly
       if (typeof window !== "undefined") {
         requestAnimationFrame(() => {
           window.scrollTo({ top: savedScrollY, behavior: "instant" });
         });
       }
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to execute next step", true);
+      showToast(err instanceof Error ? err.message : "Failed to execute clinical step", true);
     } finally {
       setActionLoadingMap((prev) => ({ ...prev, [reqId]: false }));
     }
   };
 
-  const handleClearAll = async () => {
-    if (!window.confirm("Are you sure you want to delete all care request records from history?")) return;
+  // Nurse Assignment Request
+  const handleRequestPatientAssignment = async (patientCode: string) => {
+    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
     try {
-      const res = await apiClient.clearAllCareRequests();
-      showToast(`Cleared all ${res.data?.deletedCount || 0} care requests.`);
-      setSelectedRequest(null);
-      await fetchRequests(false);
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to clear requests", true);
-    }
-  };
-
-  const handleResolveAll = async () => {
-    try {
-      const res = await apiClient.resolveAllCareRequests();
-      showToast(`All ${res.data?.modifiedCount || 0} open requests marked as RESOLVED.`);
-      await fetchRequests(false);
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to resolve open requests", true);
-    }
-  };
-
-  // Sort and filter requests
-  const sortedAndFilteredRequests = useMemo(() => {
-    return requests
-      .filter((req) => {
-        if (filter !== "ALL" && req.status !== filter) return false;
-        if (!searchQuery.trim()) return true;
-
-        const q = searchQuery.toLowerCase();
-        const pName = req.patient?.displayName?.toLowerCase() || "";
-        const pCode = req.patient?.patientCode?.toLowerCase() || "";
-        const pBed = req.patient?.bedLabel?.toLowerCase() || "";
-        const dId = req.device?.deviceId?.toLowerCase() || "";
-        const act = req.action.toLowerCase();
-        const gest = (req.gesture || "").toLowerCase();
-
-        return (
-          pName.includes(q) ||
-          pCode.includes(q) ||
-          pBed.includes(q) ||
-          dId.includes(q) ||
-          act.includes(q) ||
-          gest.includes(q)
-        );
-      })
-      .sort((a, b) => {
-        // Keep order predictable so cards don't jump around
-        if (a.status === "NEW" && b.status !== "NEW") return -1;
-        if (a.status !== "NEW" && b.status === "NEW") return 1;
-        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      await apiClient.requestNurseAssignment(patientCode, {
+        nurseName: user?.name || "Staff Nurse",
+        nurseId: user?.email || user?.name || "nurse-station",
+        nurseRole: user?.role || "NURSE",
       });
+      showToast(`Assignment requested for patient ${patientCode}. Awaiting bedside screen approval.`);
+      fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to request patient link", true);
+    } finally {
+      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
+    }
+  };
+
+  // Nurse Direct Allocation
+  const handleDirectAllocatePatient = async (patientCode: string) => {
+    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
+    try {
+      await apiClient.allocateNurse(patientCode, {
+        nurseName: user?.name || "Staff Nurse",
+        nurseId: user?.id || user?.email || "nurse-station",
+        nurseRole: user?.role || "nurse",
+      });
+      showToast(`Patient ${patientCode} allocated to you successfully.`);
+      fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to allocate patient", true);
+    } finally {
+      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
+    }
+  };
+
+  // Nurse Deallocate Patient
+  const handleDeallocatePatient = async (patientCode: string) => {
+    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
+    try {
+      await apiClient.deallocateNurse(patientCode);
+      showToast(`Patient ${patientCode} deallocated successfully.`);
+      fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to deallocate patient", true);
+    } finally {
+      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
+    }
+  };
+
+  // Metrics computation (100% REAL from database, zero preserved fake values)
+  const openRequests = useMemo(() => {
+    return requests.filter((r) => r.status !== "RESOLVED");
+  }, [requests]);
+
+  const urgentCallsCount = useMemo(() => {
+    return requests.filter(
+      (r) =>
+        (r.status === "NEW" || r.status === "ACKNOWLEDGED") &&
+        (Boolean(r.urgent) || r.action === "EMERGENCY")
+    ).length;
+  }, [requests]);
+
+  const awaitingResponseCount = useMemo(() => {
+    return requests.filter((r) => r.status === "NEW").length;
+  }, [requests]);
+
+  const inProgressCount = useMemo(() => {
+    return requests.filter((r) => r.status === "IN_PROGRESS").length;
+  }, [requests]);
+
+  const acknowledgedCount = useMemo(() => {
+    return requests.filter((r) => r.status === "ACKNOWLEDGED").length;
+  }, [requests]);
+
+  const resolvedTodayCount = useMemo(() => {
+    return requests.filter((r) => r.status === "RESOLVED").length;
+  }, [requests]);
+
+  const totalEventsCount = requests.length;
+
+  // Real connected devices ratio
+  const connectedDevicesCount = useMemo(() => {
+    return devices.filter((d) => d.connectivityStatus === "ONLINE" || d.status === "AVAILABLE" || d.status === "ASSIGNED").length;
+  }, [devices]);
+
+  const unassignedDevicesCount = useMemo(() => {
+    return devices.filter((d) => d.status === "AVAILABLE" && !d.currentAssignment).length;
+  }, [devices]);
+
+  // Filtered requests for the Live Calls tab
+  const filteredRequests = useMemo(() => {
+    return requests.filter((req) => {
+      if (filter !== "ALL" && req.status !== filter) return false;
+      if (!searchQuery.trim()) return true;
+      const q = searchQuery.toLowerCase();
+      const pName = req.patient?.displayName?.toLowerCase() || "";
+      const pBed = req.patient?.bedLabel?.toLowerCase() || "";
+      const pCode = req.patient?.patientCode?.toLowerCase() || "";
+      const pAction = req.action?.toLowerCase() || "";
+      return pName.includes(q) || pBed.includes(q) || pCode.includes(q) || pAction.includes(q);
+    });
   }, [requests, filter, searchQuery]);
 
-  // Counts
-  const counts = useMemo(() => {
-    return {
-      all: requests.length,
-      new: requests.filter((r) => r.status === "NEW").length,
-      acknowledged: requests.filter((r) => r.status === "ACKNOWLEDGED").length,
-      inProgress: requests.filter((r) => r.status === "IN_PROGRESS").length,
-      resolved: requests.filter((r) => r.status === "RESOLVED").length,
-    };
-  }, [requests]);
+  // Format relative elapsed time
+  const formatElapsedTime = (dateString?: string) => {
+    if (!dateString) return "just now";
+    const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
+    if (diff < 5) return "just now";
+    if (diff < 60) return `${diff} sec ago`;
+    const mins = Math.floor(diff / 60);
+    if (mins < 60) return `${mins} min${mins > 1 ? "s" : ""} ago`;
+    const hours = Math.floor(mins / 60);
+    return `${hours} hr${hours > 1 ? "s" : ""} ago`;
+  };
+
+  // Format clock time (e.g. 14:32)
+  const formatTimeOnly = (dateString?: string) => {
+    if (!dateString) return "--:--";
+    const d = new Date(dateString);
+    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+  };
+
+  // Redirect patient away from nurse station - patients only see their own dashboard
+  useEffect(() => {
+    if (!authLoading && user && user.role === "patient") {
+      router.push("/");
+    }
+  }, [user, authLoading, router]);
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#F5F0E8] flex items-center justify-center text-[#1C140F] font-serif font-bold text-lg tracking-wide">
-        Authenticating clinical session...
+      <div className="min-h-screen bg-[#F5F1E9] flex items-center justify-center p-6 text-[#211C19]">
+        <div className="flex items-center gap-3 bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl px-5 py-3 shadow-subtle">
+          <RefreshCw className="w-5 h-5 text-[#AD5D3D] animate-spin" />
+          <span className="text-sm font-semibold font-sans">Connecting to NetraVaani Clinical Command Center...</span>
+        </div>
       </div>
     );
   }
@@ -382,1002 +413,1151 @@ export default function NurseDashboardPage() {
     return <LoginForm />;
   }
 
+  if (user.role === "patient") {
+    return null;
+  }
+
   return (
-    <div className="min-h-screen bg-[#F5F0E8] text-[#1C140F] flex flex-col font-sans selection:bg-[#EED9CD] selection:text-[#1C140F]">
-      {/* Top Editorial Masthead Header */}
-      <header className="border-b border-[#E7DFD4] bg-[#FFFCF7]/95 backdrop-blur-md sticky top-0 z-40 shadow-[0_1px_4px_rgba(48,37,31,0.06)]">
-        <div className="max-w-7xl mx-auto px-6 h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3.5">
-            <div className="h-11 w-11 rounded-xl bg-[#1C140F] text-[#FFFCF7] flex items-center justify-center font-serif font-black text-lg shadow-sm border border-[#1C140F]">
-              NV
-            </div>
-            <div>
-              <div className="flex items-center gap-2.5">
-                <span className="font-serif text-2xl font-black tracking-tight text-[#1C140F]">
-                  NetraVaani
-                </span>
-                <span className="text-[11px] font-mono font-bold uppercase tracking-widest px-2.5 py-0.5 rounded-full bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]">
-                  Clinical Nurse Station
-                </span>
-              </div>
-              <span className="text-xs text-[#30251F] block font-serif font-semibold italic">
-                Bedside Care Requests &amp; In-Place Rapid Response Ledger
-              </span>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3">
-            {/* User Profile & Logout */}
-            <div className="flex items-center gap-2 pr-2 border-r border-[#E7DFD4]">
-              <span className="text-xs font-mono font-bold text-[#1C140F] bg-[#F5F0E8] border border-[#E7DFD4] px-2.5 py-1 rounded-lg">
-                {user.name} ({user.role})
-              </span>
-              <button
-                type="button"
-                onClick={logout}
-                className="text-xs font-bold text-[#75665D] hover:text-[#C56845] px-2 py-1 rounded-lg hover:bg-[#EED9CD]/40 transition"
-              >
-                Sign out
-              </button>
-            </div>
-
-            {/* Bedside Patient Portal Direct Link */}
-            <Link
-              href="/patient"
-              target="_blank"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-[#EED9CD] text-[#7A361E] hover:bg-[#DFBA9C] border border-[#D6C7B7] transition shadow-xs"
-              title="Open Bedside Patient Portal"
-            >
-              <UserPlus className="w-3.5 h-3.5" />
-              <span>Bedside Portal</span>
-            </Link>
-
-            {/* Bulk Actions */}
-            {requests.length > 0 && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleResolveAll}
-                  className="px-3 py-1.5 rounded-xl text-xs font-mono font-bold bg-[#FFFCF7] text-[#7A361E] hover:bg-[#EED9CD]/60 border border-[#D6C7B7] transition shadow-xs"
-                  title="Mark all active requests as resolved"
-                >
-                  Resolve All
-                </button>
-                <button
-                  type="button"
-                  onClick={handleClearAll}
-                  className="px-3 py-1.5 rounded-xl text-xs font-mono font-bold bg-[#FFFCF7] text-[#75665D] hover:text-[#C56845] hover:bg-[#EED9CD]/30 border border-[#E7DFD4] transition shadow-xs"
-                  title="Delete all request history"
-                >
-                  Clear All
-                </button>
-              </>
-            )}
-
-            {/* Manual Refresh */}
-            <button
-              onClick={() => fetchRequests(true)}
-              disabled={refreshing || loading}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-[#FFFCF7] text-[#1C140F] hover:bg-[#F5F0E8] border border-[#E7DFD4] transition shadow-xs disabled:opacity-50"
-              title="Manual refresh"
-            >
-              <RefreshCw
-                className={`w-3.5 h-3.5 text-[#C56845] ${refreshing ? "animate-spin" : ""}`}
-              />
-              <span>{refreshing ? "Refreshing..." : "Refresh"}</span>
-            </button>
-
-            {/* Registry link */}
-            <Link
-              href="/"
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-[#F5F0E8] hover:bg-[#EED9CD]/50 border border-[#E7DFD4] text-[#1C140F] transition shadow-xs"
-              title="Open Device & Patient Registry"
-            >
-              <ArrowLeft className="w-3.5 h-3.5 text-[#C56845]" />
-              <span>Registry</span>
-            </Link>
+    <div className="min-h-screen bg-[#F5F1E9] text-[#211C19] font-sans antialiased selection:bg-[#AD5D3D]/20 selection:text-[#211C19]">
+      {/* Toast Alert Banner */}
+      {toastMessage && (
+        <div className="fixed top-4 right-4 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+          <div
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-xs font-semibold shadow-card ${
+              toastIsError
+                ? "bg-[#FEF3F2] border-[#FECDCA] text-[#B42318]"
+                : "bg-[#EDF5F0] border-[#C5DDCF] text-[#42765A]"
+            }`}
+          >
+            {toastIsError ? <AlertTriangle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
+            <span>{toastMessage}</span>
           </div>
         </div>
-      </header>
+      )}
 
-      {/* Main Content */}
-      <main className="flex-1 max-w-7xl mx-auto px-6 py-6 w-full space-y-6">
-        {/* KPI Counter Cards */}
-        <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <div
-            onClick={() => setFilter("NEW")}
-            className={`p-4 rounded-2xl border cursor-pointer transition flex items-center justify-between ${
-              filter === "NEW"
-                ? "bg-[#FFFCF7] border-[#C56845] ring-2 ring-[#C56845] shadow-md"
-                : "bg-[#FFFCF7] border-[#E7DFD4] hover:border-[#D6C7B7]"
-            }`}
-          >
-            <div>
-              <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#C56845] block">
-                New Requests
-              </span>
-              <div className="text-3xl font-serif font-black text-[#1C140F] mt-0.5">
-                {counts.new}
+      {/* Main Container - 1440px desktop viewport target */}
+      <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-5">
+        
+        {/* TOP NAVIGATION BAR */}
+        <header className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl shadow-subtle p-3.5 sm:p-4 mb-6">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
+            
+            {/* Brand Logo & Clinical Command Center */}
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-[#211C19] flex items-center justify-center shrink-0 shadow-xs">
+                <span className="font-heading font-extrabold text-sm text-[#FFFCF7] tracking-wider">
+                  NV
+                </span>
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="font-wordmark font-bold text-xl sm:text-2xl text-[#211C19] tracking-tight leading-none">
+                    NetraVaani
+                  </span>
+                </div>
+                <div className="text-[11px] font-medium text-[#76685F] mt-0.5 tracking-wide">
+                  {activeTab === "devices"
+                    ? "Assistive Gaze & Gesture Clinical Platform"
+                    : "Clinical Command Center"}
+                </div>
               </div>
             </div>
-            {counts.new > 0 && (
-              <span className="h-3 w-3 rounded-full bg-[#C56845] animate-ping" />
-            )}
-          </div>
 
-          <div
-            onClick={() => setFilter("IN_PROGRESS")}
-            className={`p-4 rounded-2xl border cursor-pointer transition ${
-              filter === "IN_PROGRESS"
-                ? "bg-[#FFFCF7] border-[#DFBA9C] ring-2 ring-[#DFBA9C] shadow-md"
-                : "bg-[#FFFCF7] border-[#E7DFD4] hover:border-[#D6C7B7]"
-            }`}
-          >
-            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#8C4318] block">
-              In Progress
-            </span>
-            <div className="text-3xl font-serif font-black text-[#1C140F] mt-0.5">
-              {counts.inProgress}
-            </div>
-          </div>
+            {/* Right Controls: Telemetry indicator, Bedside Portal, Refresh, User */}
+            <div className="flex items-center gap-2.5 sm:gap-3.5 flex-wrap">
+              {/* Telemetry Indicator */}
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
+                <span className="w-2 h-2 rounded-full bg-[#42765A] animate-pulse" />
+                <span>{activeTab === "devices" ? "API connected" : "System online"}</span>
+              </div>
 
-          <div
-            onClick={() => setFilter("ACKNOWLEDGED")}
-            className={`p-4 rounded-2xl border cursor-pointer transition ${
-              filter === "ACKNOWLEDGED"
-                ? "bg-[#FFFCF7] border-[#D6C7B7] ring-2 ring-[#D6C7B7] shadow-md"
-                : "bg-[#FFFCF7] border-[#E7DFD4] hover:border-[#D6C7B7]"
-            }`}
-          >
-            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#7A361E] block">
-              Acknowledged
-            </span>
-            <div className="text-3xl font-serif font-black text-[#1C140F] mt-0.5">
-              {counts.acknowledged}
-            </div>
-          </div>
+              {/* Refresh button */}
+              <button
+                type="button"
+                onClick={() => fetchRequests(true)}
+                title="Sync clinical ledger"
+                className="p-1.5 rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#211C19] hover:bg-[#F7F2EB] transition"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-[#AD5D3D]" : ""}`} />
+              </button>
 
-          <div
-            onClick={() => setFilter("RESOLVED")}
-            className={`p-4 rounded-2xl border cursor-pointer transition ${
-              filter === "RESOLVED"
-                ? "bg-[#FFFCF7] border-[#CEBEB0] ring-2 ring-[#CEBEB0] shadow-md"
-                : "bg-[#FFFCF7] border-[#E7DFD4] hover:border-[#D6C7B7]"
-            }`}
-          >
-            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#75665D] block">
-              Resolved
-            </span>
-            <div className="text-3xl font-serif font-black text-[#75665D] mt-0.5">
-              {counts.resolved}
-            </div>
-          </div>
-        </section>
-
-        {/* SECTION: Patient Bedside Authorization & Nurse Assignment */}
-        <section className="bg-[#FFFCF7] border border-[#E7DFD4] p-5 rounded-2xl shadow-sm space-y-4">
-          <div className="flex items-center justify-between border-b border-[#E7DFD4] pb-3">
-            <div>
-              <h3 className="font-serif font-bold text-lg text-[#1C140F] flex items-center gap-2">
-                <UserPlus className="w-5 h-5 text-[#C56845]" />
-                Patient Bedside Care Assignment &amp; Approval Flow
-              </h3>
-              <p className="text-xs text-[#30251F] font-serif font-medium italic mt-0.5">
-                Nurses must be authorized by the patient. When requested, the patient approves on their bedside screen.
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold px-3 py-1 rounded-full bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]">
-              {patients.filter((p) => p.status === "ACTIVE").length} Active Patients
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-            {patients.map((p) => {
-              const na = p.nurseAssignment;
-              const isApproved = na?.status === "APPROVED";
-              const isPending = na?.status === "PENDING";
-              const isAssignedToCurrent = na?.nurseName === user?.name;
-              const isBusy = nurseAssignLoading[p.patientCode] || false;
-
-              return (
-                <div
-                  key={p.patientCode}
-                  className="p-3.5 rounded-xl border border-[#E7DFD4] bg-[#F5F0E8] flex flex-col justify-between space-y-2.5"
-                >
-                  <div className="flex items-start justify-between">
-                    <div>
-                      <h4 className="font-serif font-bold text-[#1C140F] text-base">
-                        {p.displayName}
-                      </h4>
-                      <p className="text-xs font-mono text-[#30251F] font-semibold">
-                        Code: {p.patientCode} &bull; Bed: {p.bedLabel || "General"}
-                      </p>
-                    </div>
-
-                    <span
-                      className={`px-2 py-0.5 rounded-full text-[10px] font-mono font-bold uppercase ${
-                        isApproved
-                          ? "bg-[#FFFCF7] text-[#1C140F] border border-[#D6C7B7]"
-                          : isPending
-                          ? "bg-[#EED9CD] text-[#7A361E] border border-[#C56845]"
-                          : "bg-[#FFFCF7] text-[#75665D] border border-[#E7DFD4]"
-                      }`}
-                    >
-                      {na?.status || "UNASSIGNED"}
-                    </span>
+              {/* User menu / Logout */}
+              <div className="flex items-center gap-2.5 pl-2 border-l border-[#E5D9CA]">
+                <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-[#EDE4D8]/80 text-[#211C19] text-xs font-bold">
+                  <div className="w-5 h-5 rounded-full bg-[#211C19] text-white text-[10px] flex items-center justify-center font-bold">
+                    {user.name?.charAt(0) || "N"}
                   </div>
-
-                  {/* Assignment Status details */}
-                  <div className="text-xs font-medium">
-                    {isApproved ? (
-                      <div className="p-2 rounded-lg bg-[#FFFCF7] border border-[#D6C7B7] text-[#1C140F] space-y-0.5">
-                        <div className="font-bold text-[#7A361E] flex items-center gap-1">
-                          <Check className="w-3.5 h-3.5 text-[#C56845]" />
-                          Assigned Nurse: {na?.nurseName}
-                        </div>
-                        {na?.approvedAt && (
-                          <div className="text-[10px] font-mono text-[#75665D]">
-                            Patient Approved: {new Date(na.approvedAt).toLocaleTimeString()}
-                          </div>
-                        )}
-                      </div>
-                    ) : isPending ? (
-                      <div className="p-2 rounded-lg bg-[#EED9CD]/60 border border-[#D6C7B7] text-[#7A361E] space-y-0.5">
-                        <div className="font-bold flex items-center gap-1">
-                          <RefreshCw className="w-3.5 h-3.5 animate-spin text-[#C56845]" />
-                          Awaiting Patient Approval
-                        </div>
-                        <div className="text-[10px] font-mono text-[#30251F]">
-                          Requested for: {na?.nurseName}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-[#75665D] text-[11px] font-serif italic">
-                        No active nurse assignment. Request patient approval to link care.
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Action button */}
-                  <div>
-                    {!isApproved ? (
-                      <button
-                        onClick={() => handleRequestPatientAssignment(p.patientCode)}
-                        disabled={isBusy}
-                        className="w-full py-1.5 px-3 rounded-lg text-xs font-bold bg-[#C56845] hover:bg-[#B05534] text-[#FFFCF7] shadow-xs transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                      >
-                        {isBusy ? (
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                        ) : (
-                          <UserPlus className="w-3 h-3" />
-                        )}
-                        <span>Request Care Assignment</span>
-                      </button>
-                    ) : (
-                      <div className="flex items-center justify-between text-xs text-[#1C140F]">
-                        <span className="font-bold">Active Care Link</span>
-                        <Link
-                          href={`/patient`}
-                          target="_blank"
-                          className="text-[11px] font-mono font-bold text-[#C56845] hover:underline"
-                        >
-                          View Bedside &rarr;
-                        </Link>
-                      </div>
-                    )}
-                  </div>
+                  <span className="hidden sm:inline">{user.name || "Nurse Station"}</span>
                 </div>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await logout();
+                    if (typeof window !== "undefined") {
+                      window.location.href = "/";
+                    }
+                  }}
+                  title="Sign out of station"
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:border-[#FECDCA] hover:bg-[#FEF3F2] transition shadow-xs"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Sign out</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Segmented Navigation Tabs */}
+          <div className="mt-3.5 pt-3 border-t border-[#E5D9CA]/80 flex items-center gap-1 overflow-x-auto">
+            {[
+              { id: "overview", label: "Overview" },
+              { id: "calls", label: `Live calls${awaitingResponseCount > 0 ? ` (${awaitingResponseCount})` : ""}` },
+              { id: "patients", label: `Patients (${patients.length})` },
+              { id: "devices", label: `Devices (${devices.length})` },
+              { id: "history", label: "History" },
+            ].map((tab) => {
+              const isActive = activeTab === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                    isActive
+                      ? "bg-[#EFE7DC] text-[#211C19] shadow-xs"
+                      : "text-[#76685F] hover:text-[#211C19] hover:bg-[#F5F1E9]"
+                  }`}
+                >
+                  {tab.label}
+                </button>
               );
             })}
           </div>
-        </section>
+        </header>
 
-        {/* SECTION: Predefined Hardware Commands Matrix */}
-        <section className="bg-[#FFFCF7] border border-[#E7DFD4] p-5 rounded-2xl shadow-sm space-y-3">
-          <div className="flex items-center justify-between border-b border-[#E7DFD4] pb-2.5">
-            <div>
-              <h3 className="font-serif font-bold text-lg text-[#1C140F] flex items-center gap-2">
-                <Radio className="w-5 h-5 text-[#C56845]" />
-                Predefined Bedside Gesture Commands Matrix
-              </h3>
-              <p className="text-xs text-[#30251F] font-serif font-medium italic mt-0.5">
-                Exact physical actions, serial messages, and clinical dashboard displays currently active.
-              </p>
+        {/* TAB 1: OVERVIEW */}
+        {activeTab === "overview" && (
+          <div className="space-y-6">
+            
+            {/* Page Greeting Subheader */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <div>
+                <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-[#211C19] tracking-tight">
+                  Good evening, {user.name || "Nurse"}
+                </h1>
+                <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-1">
+                  Live clinical telemetry &amp; bedside monitoring
+                </p>
+              </div>
             </div>
-            <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-[#E8E2D7] text-[#1C140F] border border-[#D6C7B7]">
-              5 Predefined Actions
-            </span>
-          </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-[#E7DFD4] bg-[#F5F0E8] text-[#1C140F] font-mono font-bold uppercase text-[11px]">
-                  <th className="py-2.5 px-3">Do this (Physical Action)</th>
-                  <th className="py-2.5 px-3">Serial Shows</th>
-                  <th className="py-2.5 px-3">Dashboard Shows</th>
-                  <th className="py-2.5 px-3 text-right">Badge Preview</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-[#E7DFD4] font-medium text-[#1C140F]">
-                <tr>
-                  <td className="py-2.5 px-3 font-bold text-sm">2 blinks, wait</td>
-                  <td className="py-2.5 px-3 font-mono font-bold text-[#7A361E]">[cmd] YES</td>
-                  <td className="py-2.5 px-3 font-serif font-black text-base text-[#1C140F]">YES</td>
-                  <td className="py-2.5 px-3 text-right">
-                    <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#E8E2D7] text-[#1C140F] border border-[#D6C7B7]">
-                      YES
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-2.5 px-3 font-bold text-sm">4+ blinks</td>
-                  <td className="py-2.5 px-3 font-mono font-bold text-[#7A361E]">[cmd] WATER</td>
-                  <td className="py-2.5 px-3 font-serif font-black text-base text-[#1C140F]">WATER</td>
-                  <td className="py-2.5 px-3 text-right">
-                    <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]">
-                      WATER
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-2.5 px-3 font-bold text-sm">Squeeze both hands together, once</td>
-                  <td className="py-2.5 px-3 font-mono font-bold text-[#8C4318]">[cmd] NO</td>
-                  <td className="py-2.5 px-3 font-serif font-black text-base text-[#1C140F]">NO</td>
-                  <td className="py-2.5 px-3 text-right">
-                    <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#F4DFC8] text-[#8C4318] border border-[#DFBA9C]">
-                      NO
-                    </span>
-                  </td>
-                </tr>
-                <tr>
-                  <td className="py-2.5 px-3 font-bold text-sm">Squeeze left hand 3 times</td>
-                  <td className="py-2.5 px-3 font-mono font-bold text-[#1C140F]">[cmd] CALL NURSE</td>
-                  <td className="py-2.5 px-3 font-serif font-black text-base text-[#1C140F]">CALL NURSE</td>
-                  <td className="py-2.5 px-3 text-right">
-                    <span className="px-3 py-1 rounded-lg text-xs font-mono font-bold bg-[#E5DFD7] text-[#1C140F] border border-[#CEBEB0]">
-                      CALL NURSE
-                    </span>
-                  </td>
-                </tr>
-                <tr className="bg-[#EED9CD]/20">
-                  <td className="py-2.5 px-3 font-bold text-sm text-[#C56845]">
-                    Squeeze both hands together, 3 times
-                  </td>
-                  <td className="py-2.5 px-3 font-mono font-black text-[#C56845]">
-                    [cmd] EMERGENCY / SEVERE PAIN
-                  </td>
-                  <td className="py-2.5 px-3 font-serif font-black text-base text-[#C56845]">
-                    EMERGENCY, LEDs 1–4 flash red
-                  </td>
-                  <td className="py-2.5 px-3 text-right">
-                    <span className="px-3 py-1 rounded-lg text-xs font-mono font-black bg-[#C56845] text-[#FFFCF7] border border-[#A84A29]">
-                      EMERGENCY
-                    </span>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
+            {/* Row of 5 Compact Metric Cards (REAL counts strictly from MongoDB) */}
+            {/* Row of 5 Vivid Animated Metric Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4">
+              
+              {/* Urgent calls */}
+              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#FEF3F2] border border-[#FECDCA] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#B42318]">Urgent calls</span>
+                  <span className="w-2 h-2 rounded-full bg-[#B42318] group-hover:scale-125 transition-transform" />
+                </div>
+                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#B42318] tracking-tight">
+                  {String(urgentCallsCount).padStart(2, "0")}
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[#B42318]/20 mt-3 overflow-hidden">
+                  <div className="h-full bg-[#B42318] rounded-full w-full" />
+                </div>
+              </div>
 
-        {/* Search & Filter Toolbar */}
-        <section className="bg-[#FFFCF7] border border-[#E7DFD4] p-4 rounded-2xl shadow-xs flex flex-col md:flex-row md:items-center justify-between gap-4">
-          {/* Status Filters */}
-          <div className="flex flex-wrap items-center gap-1.5">
-            <span className="text-xs font-mono font-bold uppercase tracking-wider text-[#1C140F] mr-1 flex items-center gap-1">
-              <SlidersHorizontal className="w-3.5 h-3.5 text-[#C56845]" />
-              Filter:
-            </span>
-            {(["ALL", "NEW", "ACKNOWLEDGED", "IN_PROGRESS", "RESOLVED"] as const).map((st) => (
-              <button
-                key={st}
-                onClick={() => setFilter(st)}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
-                  filter === st
-                    ? "bg-[#1C140F] text-[#FFFCF7] shadow-xs"
-                    : "bg-[#F5F0E8] hover:bg-[#EED9CD]/60 text-[#30251F] hover:text-[#1C140F] border border-[#E7DFD4]"
-                }`}
-              >
-                {st === "ALL" ? `All (${counts.all})` : st.replace("_", " ")}
-              </button>
-            ))}
-          </div>
+              {/* Awaiting response */}
+              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#FAF0E6] border border-[#E2C7B8] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#AD5D3D]">Awaiting response</span>
+                  <span className="w-2 h-2 rounded-full bg-[#AD5D3D] group-hover:scale-125 transition-transform" />
+                </div>
+                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#AD5D3D] tracking-tight">
+                  {String(awaitingResponseCount).padStart(2, "0")}
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[#AD5D3D]/20 mt-3 overflow-hidden">
+                  <div className="h-full bg-[#AD5D3D] rounded-full w-full" />
+                </div>
+              </div>
 
-          {/* Quick Search */}
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 text-[#75665D] absolute left-3 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              placeholder="Search patient, bed, command, action..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-[#F5F0E8] border border-[#E7DFD4] rounded-xl pl-9 pr-8 py-2 text-xs font-bold text-[#1C140F] placeholder-[#75665D] focus:outline-none focus:border-[#C56845] focus:bg-[#FFFCF7] transition"
-            />
-            {searchQuery && (
-              <button
-                onClick={() => setSearchQuery("")}
-                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#75665D] hover:text-[#1C140F]"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </section>
+              {/* In progress */}
+              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#EBF3FB] border border-[#C3DCF4] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#2B6CB0]">In progress</span>
+                  <span className="w-2 h-2 rounded-full bg-[#2B6CB0] group-hover:scale-125 transition-transform" />
+                </div>
+                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#2B6CB0] tracking-tight">
+                  {String(inProgressCount).padStart(2, "0")}
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[#2B6CB0]/20 mt-3 overflow-hidden">
+                  <div className="h-full bg-[#2B6CB0] rounded-full w-full" />
+                </div>
+              </div>
 
-        {/* Requests List */}
-        <section className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-2xl font-serif font-black text-[#1C140F]">
-              Care Queue Ledger ({sortedAndFilteredRequests.length})
-            </h3>
-            <span className="text-xs text-[#30251F] font-serif font-bold italic">
-              Prioritizing new calls &bull; In-place approval confirmations
-            </span>
-          </div>
+              {/* Resolved today (Vivid Clinical Green Highlight) */}
+              <div className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#F4F9F6] to-[#EDF5F0] border border-[#B8DEC7] hover:border-[#42765A] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-extrabold text-[#42765A]">Resolved today</span>
+                  <span className="w-2 h-2 rounded-full bg-[#42765A] animate-pulse group-hover:scale-125 transition-transform" />
+                </div>
+                <div className="mt-2 font-heading text-3xl sm:text-4xl font-black text-[#42765A] tracking-tight">
+                  {String(resolvedTodayCount).padStart(2, "0")}
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[#42765A]/25 mt-3 overflow-hidden">
+                  <div className="h-full bg-[#42765A] rounded-full w-full" />
+                </div>
+              </div>
 
-          {loading ? (
-            <div className="p-16 text-center text-[#1C140F] font-bold text-sm bg-[#FFFCF7] rounded-2xl border border-[#E7DFD4] shadow-xs">
-              <RefreshCw className="w-6 h-6 animate-spin text-[#C56845] mx-auto mb-2" />
-              Loading care requests from bedside devices...
+              {/* Total shift events */}
+              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#F5F1E9] border border-[#E5D9CA] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between col-span-2 sm:col-span-1 group">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-[#76685F]">Total events</span>
+                  <span className="w-2 h-2 rounded-full bg-[#76685F] group-hover:scale-125 transition-transform" />
+                </div>
+                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#211C19] tracking-tight">
+                  {String(totalEventsCount).padStart(2, "0")}
+                </div>
+                <div className="h-1.5 w-full rounded-full bg-[#76685F]/20 mt-3 overflow-hidden">
+                  <div className="h-full bg-[#76685F] rounded-full w-full" />
+                </div>
+              </div>
             </div>
-          ) : sortedAndFilteredRequests.length === 0 ? (
-            <div className="p-16 rounded-2xl bg-[#FFFCF7] border border-[#E7DFD4] text-center space-y-3 shadow-xs">
-              <CheckCircle2 className="w-12 h-12 text-[#C56845]/50 mx-auto" />
-              <p className="text-[#1C140F] text-xl font-serif font-black">No matching care requests</p>
-              <p className="text-xs text-[#30251F] max-w-sm mx-auto font-serif font-medium italic">
-                {filter === "ALL"
-                  ? "There are currently no care requests in the clinical queue. Bedside triggers will stream here automatically."
-                  : `No requests with status ${filter.replace("_", " ")}.`}
-              </p>
-              {filter !== "ALL" && (
-                <button
-                  onClick={() => setFilter("ALL")}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#F5F0E8] hover:bg-[#EED9CD]/60 text-[#1C140F] border border-[#E7DFD4] transition"
-                >
-                  View All Requests
-                </button>
-              )}
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-              {sortedAndFilteredRequests.map((req) => {
-                const actionInfo = ACTION_CONFIG[req.action] || {
-                  label: req.action,
-                  badge: "bg-[#F5F0E8] text-[#1C140F] border-[#E7DFD4] font-bold",
-                  border: "border-[#E7DFD4]",
-                  bgTint: "bg-[#FFFCF7]",
-                  gestureDescription: req.gesture || req.gestureId,
-                  serial: `[cmd] ${req.action}`,
-                };
-                const isBusy = actionLoadingMap[req._id] || false;
-                const isNew = req.status === "NEW";
 
-                return (
-                  <div
-                    key={req._id}
-                    className={`bg-[#FFFCF7] border rounded-2xl p-5 shadow-xs hover:shadow-md transition flex flex-col justify-between ${
-                      isNew
-                        ? "border-[#C56845] ring-2 ring-[#C56845]/60 bg-[#EED9CD]/20"
-                        : req.status === "IN_PROGRESS"
-                        ? "border-[#DFBA9C]"
-                        : req.status === "ACKNOWLEDGED"
-                        ? "border-[#D6C7B7]"
-                        : "border-[#E7DFD4] opacity-90"
-                    }`}
-                  >
-                    <div className="space-y-4">
-                      {/* Card Top: Action Pill & Status Badge */}
-                      <div className="flex items-start justify-between gap-2">
-                        <span
-                          className={`px-3 py-1.5 rounded-xl text-xs font-mono border ${actionInfo.badge}`}
-                        >
-                          {actionInfo.label}
-                        </span>
+            {/* Main Overview Grid: Clinical Devices & Gesture Reference */}
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6">
+              
+              {/* Card 1: Clinical Device Status (6 cols) */}
+              <div className="lg:col-span-6 bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-4">
+                <div className="flex items-center justify-between">
+                  <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
+                    Clinical devices &amp; Gateways
+                  </h2>
+                  <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
+                    {connectedDevicesCount} Online
+                  </span>
+                </div>
 
-                        <span
-                          className={`px-2.5 py-1 rounded-full text-[10px] font-mono font-bold uppercase tracking-wider ${
-                            isNew
-                              ? "bg-[#C56845] text-[#FFFCF7]"
-                              : req.status === "ACKNOWLEDGED"
-                              ? "bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]"
-                              : req.status === "IN_PROGRESS"
-                              ? "bg-[#F4DFC8] text-[#8C4318] border border-[#DFBA9C]"
-                              : "bg-[#E8E2D7] text-[#1C140F] border border-[#D6C7B7]"
-                          }`}
-                        >
-                          {req.status.replace("_", " ")}
-                        </span>
-                      </div>
-
-                      {/* Patient & Bed Info */}
-                      <div>
-                        <div className="flex items-center justify-between">
-                          <h4 className="font-serif font-black text-xl text-[#1C140F] leading-tight">
-                            {req.patient?.displayName || "Unknown Patient"}
-                          </h4>
-                          <button
-                            onClick={() => setSelectedRequest(req)}
-                            className="text-xs font-bold text-[#C56845] hover:text-[#B05534] inline-flex items-center gap-0.5"
-                          >
-                            Details <ChevronRight className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                        <div className="text-xs text-[#30251F] font-mono font-bold flex items-center gap-2 mt-1">
-                          <span className="flex items-center gap-1 font-serif text-[#1C140F] font-bold">
-                            <Bed className="w-3.5 h-3.5 text-[#C56845]" />
-                            {req.patient?.bedLabel || "Bed Unassigned"}
-                          </span>
-                          <span>&bull;</span>
-                          <span className="text-[11px] text-[#75665D]">
-                            {req.patient?.patientCode}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Physical Action & Serial Mapping Display */}
-                      <div className="p-3 rounded-xl bg-[#F5F0E8] border border-[#E7DFD4] text-xs space-y-1.5">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[#75665D] font-mono font-bold uppercase text-[10px]">
-                            Physical Action:
-                          </span>
-                          <strong className="text-[#1C140F] font-sans font-bold text-xs text-right">
-                            {actionInfo.gestureDescription}
-                          </strong>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[#75665D] font-mono font-bold uppercase text-[10px]">
-                            Serial Shows:
-                          </span>
-                          <span className="font-mono font-bold text-[#7A361E]">
-                            {actionInfo.serial}
-                          </span>
-                        </div>
-                        <div className="flex items-center justify-between">
-                          <span className="text-[#75665D] font-mono font-bold uppercase text-[10px]">
-                            Device ID:
-                          </span>
-                          <span className="font-mono font-bold text-[#1C140F]">
-                            {req.device?.deviceId || "N/A"}
-                          </span>
-                        </div>
-                      </div>
-
-                      {/* Time Details */}
-                      <div className="text-[11px] font-mono font-bold text-[#30251F] space-y-0.5">
-                        <div className="flex items-center gap-1 text-[#75665D]">
-                          <Clock className="w-3 h-3 text-[#75665D] shrink-0" />
-                          <span>Created: {new Date(req.createdAt).toLocaleTimeString()}</span>
-                        </div>
-                        {req.acknowledgedAt && (
-                          <div className="text-[#7A361E]">
-                            Acked: {new Date(req.acknowledgedAt).toLocaleTimeString()}
-                          </div>
-                        )}
-                        {req.inProgressAt && (
-                          <div className="text-[#8C4318]">
-                            In-Progress: {new Date(req.inProgressAt).toLocaleTimeString()}
-                          </div>
-                        )}
-                        {req.resolvedAt && (
-                          <div className="text-[#75665D]">
-                            Resolved: {new Date(req.resolvedAt).toLocaleTimeString()}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    {/* Card Action Buttons (Prompts in-place confirmation dialog!) */}
-                    <div className="pt-3 border-t border-[#E7DFD4] mt-3">
-                      {req.status === "NEW" && (
-                        <button
-                          type="button"
-                          onClick={() => promptStepConfirmation(req, "ACKNOWLEDGED")}
-                          disabled={isBusy}
-                          className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#C56845] text-[#FFFCF7] hover:bg-[#B05534] transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          {isBusy ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Check className="w-3.5 h-3.5" />
-                          )}
-                          Acknowledge Request
-                        </button>
-                      )}
-
-                      {req.status === "ACKNOWLEDGED" && (
-                        <button
-                          type="button"
-                          onClick={() => promptStepConfirmation(req, "IN_PROGRESS")}
-                          disabled={isBusy}
-                          className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#EED9CD] text-[#7A361E] hover:bg-[#DFBA9C] transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50 border border-[#D6C7B7]"
-                        >
-                          {isBusy ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <Play className="w-3.5 h-3.5 fill-[#7A361E]" />
-                          )}
-                          Start Handling (In Progress)
-                        </button>
-                      )}
-
-                      {req.status === "IN_PROGRESS" && (
-                        <button
-                          type="button"
-                          onClick={() => promptStepConfirmation(req, "RESOLVED")}
-                          disabled={isBusy}
-                          className="w-full py-2.5 rounded-xl text-xs font-bold bg-[#1C140F] text-[#FFFCF7] hover:bg-[#30251F] transition shadow-xs flex items-center justify-center gap-1.5 disabled:opacity-50"
-                        >
-                          {isBusy ? (
-                            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                          ) : (
-                            <CheckCircle2 className="w-3.5 h-3.5" />
-                          )}
-                          Mark as Resolved
-                        </button>
-                      )}
-
-                      {req.status === "RESOLVED" && (
-                        <div className="py-1 text-center text-xs font-serif font-black text-[#75665D] flex items-center justify-center gap-1">
-                          <CheckCircle2 className="w-4 h-4 text-[#C56845]" />
-                          Resolved ({new Date(req.resolvedAt || req.updatedAt).toLocaleTimeString()})
-                        </div>
-                      )}
+                {/* Bedside Gateway Status Row */}
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] flex items-center justify-center shrink-0">
+                    <Radio className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <div className="font-bold text-sm text-[#211C19]">Bedside gateways</div>
+                    <div className="text-xs font-semibold text-[#42765A]">
+                      {connectedDevicesCount > 0 ? "Telemetry Stream Active" : "No Gateways Connected"}
                     </div>
                   </div>
-                );
-              })}
-            </div>
-          )}
-        </section>
-      </main>
+                </div>
 
-      {/* IN-PLACE CONFIRMATION DIALOG (STAYS RIGHT THERE ONLY!) */}
+                <div className="pt-2 border-t border-[#E5D9CA]/80 space-y-3">
+                  {/* Connected devices */}
+                  <div>
+                    <div className="flex items-center justify-between text-xs font-medium mb-1.5">
+                      <span className="text-[#76685F]">Connected devices</span>
+                      <span className="font-bold font-mono text-[#211C19]">
+                        {String(connectedDevicesCount).padStart(2, "0")} / {String(devices.length).padStart(2, "0")}
+                      </span>
+                    </div>
+                    <div className="w-full h-2 rounded-full bg-[#EDE4D8] overflow-hidden">
+                      <div
+                        className="h-full bg-[#42765A] rounded-full transition-all duration-500"
+                        style={{
+                          width: `${devices.length > 0 ? Math.min(100, (connectedDevicesCount / devices.length) * 100) : 0}%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Unassigned devices */}
+                  <div className="flex items-center justify-between text-xs font-medium pt-1">
+                    <span className="text-[#76685F]">Unassigned devices</span>
+                    <span className="font-bold text-[#AD5D3D]">
+                      {unassignedDevicesCount} devices
+                    </span>
+                  </div>
+
+                  {/* Manage devices action */}
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("devices")}
+                    className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs"
+                  >
+                    Manage devices
+                  </button>
+                </div>
+              </div>
+
+              {/* Card 2: Compact Gesture Reference (6 cols) */}
+              <div className="lg:col-span-6 bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
+                      Gesture Reference
+                    </h2>
+                    <p className="text-xs text-[#76685F] font-medium">
+                      Calibrated ESP32-S3 triggers
+                    </p>
+                  </div>
+                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#EDE4D8] text-[#76685F]">
+                    Firmware v1.1
+                  </span>
+                </div>
+
+                <div className="divide-y divide-[#E5D9CA]/70 text-xs">
+                  {PREDEFINED_COMMANDS.map((cmd) => (
+                    <div key={cmd.action} className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2">
+                      <div>
+                        <div className="font-bold text-[#211C19] flex items-center gap-1.5">
+                          <span>{cmd.dashboard}</span>
+                        </div>
+                        <div className="text-[11px] text-[#76685F] font-medium">{cmd.gesture}</div>
+                      </div>
+                      <span className="font-mono text-[10px] font-bold text-[#76685F] bg-[#F5F1E9] px-2 py-0.5 rounded border border-[#E5D9CA] shrink-0">
+                        {cmd.serial}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+
+            {/* Bottom Full-Width Section: Recent Clinical Activity (Real from DB) */}
+            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-4 sm:p-5 shadow-subtle">
+              <div className="flex items-center justify-between mb-3.5">
+                <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
+                  Recent clinical activity
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("history")}
+                  className="text-xs font-bold text-[#AD5D3D] hover:underline flex items-center gap-1"
+                >
+                  <span>View history</span>
+                  <ArrowRight className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <div className="divide-y divide-[#E5D9CA]/80">
+                {requests.filter((r) => r.status === "RESOLVED").length === 0 ? (
+                  <div className="py-4 text-center text-xs text-[#76685F] font-medium">
+                    No clinical calls resolved yet during this shift. Real-time care events will appear here once handled.
+                  </div>
+                ) : (
+                  requests
+                    .filter((r) => r.status === "RESOLVED")
+                    .slice(0, 5)
+                    .map((req) => (
+                      <div key={req._id} className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
+                        <div className="flex items-start gap-2.5">
+                          <div className="mt-0.5 text-[#42765A]">
+                            <CheckCircle2 className="w-4 h-4" />
+                          </div>
+                          <div>
+                            <div className="font-semibold text-xs sm:text-sm text-[#211C19]">
+                              Call resolved · {req.patient?.bedLabel || "Bedside"}
+                            </div>
+                            <div className="text-xs text-[#76685F]">
+                              {req.patient?.displayName || "Patient"} ({req.action.replace("_", " ")}) — handled by station
+                            </div>
+                          </div>
+                        </div>
+                        <span className="text-xs font-mono text-[#76685F] shrink-0">
+                          {formatTimeOnly(req.resolvedAt || req.updatedAt)}
+                        </span>
+                      </div>
+                    ))
+                )}
+              </div>
+            </div>
+
+            {/* Bottom Status Indicator */}
+            <div className="text-center py-2">
+              <p className="text-[11px] text-[#76685F] font-medium">
+                NetraVaani Clinical Telemetry Platform · Clinical Station · Real-time patient care ledger active.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 2: LIVE CALLS (Full Care Ledger) */}
+        {activeTab === "calls" && (
+          <div className="space-y-5">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
+                  Live Care Ledger
+                </h1>
+                <p className="text-xs text-[#76685F] font-medium mt-0.5">
+                  Real-time bedside gaze &amp; gesture call queue
+                </p>
+              </div>
+            </div>
+
+            {/* Search and Filters */}
+            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3 shadow-subtle flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
+              <div className="relative flex-1">
+                <Search className="w-4 h-4 text-[#76685F] absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search by bed, patient, or call type..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-9 pr-3 py-1.5 rounded-lg text-xs font-medium border border-[#E5D9CA] bg-[#FFFCF7] focus:outline-none focus:border-[#AD5D3D]"
+                />
+              </div>
+
+              <div className="flex items-center gap-1.5 overflow-x-auto">
+                {(["ALL", "NEW", "ACKNOWLEDGED", "IN_PROGRESS", "RESOLVED"] as const).map((s) => (
+                  <button
+                    key={s}
+                    type="button"
+                    onClick={() => setFilter(s)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
+                      filter === s
+                        ? "bg-[#AD5D3D] text-white shadow-xs"
+                        : "bg-[#F5F1E9] text-[#76685F] hover:text-[#211C19]"
+                    }`}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Calls Table / Card List */}
+            {filteredRequests.length === 0 ? (
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-2">
+                <div className="w-12 h-12 rounded-full bg-[#EDF5F0] text-[#42765A] flex items-center justify-center mx-auto mb-2">
+                  <CheckCircle2 className="w-6 h-6" />
+                </div>
+                <h3 className="font-heading font-bold text-base text-[#211C19]">
+                  No Bedside Calls in Queue
+                </h3>
+                <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
+                  Station ledger is currently clear. When a patient blinks or squeezes their calibrated sensor, calls appear here in real time.
+                </p>
+              </div>
+            ) : (
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl shadow-subtle overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead>
+                      <tr className="bg-[#F5ECE6]/60 border-b border-[#E5D9CA] text-[#76685F] font-semibold">
+                        <th className="py-3 px-4">Status &amp; Priority</th>
+                        <th className="py-3 px-4">Bed &amp; Patient</th>
+                        <th className="py-3 px-4">Gesture / Request</th>
+                        <th className="py-3 px-4">Elapsed</th>
+                        <th className="py-3 px-4 text-right">Clinical Action</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-[#E5D9CA]/70">
+                      {filteredRequests.map((req) => {
+                        const isEmergency = req.action === "EMERGENCY" || Boolean(req.urgent);
+                        return (
+                          <tr
+                            key={req._id}
+                            className={`hover:bg-[#F7F2EB] transition ${
+                              isEmergency && req.status !== "RESOLVED" ? "bg-[#FEF3F2]/40" : ""
+                            }`}
+                          >
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
+                                    isEmergency
+                                      ? "bg-[#FEE4E2] text-[#B42318]"
+                                      : req.status === "RESOLVED"
+                                      ? "bg-[#EDF5F0] text-[#42765A]"
+                                      : req.status === "IN_PROGRESS"
+                                      ? "bg-[#EBF3FB] text-[#2B6CB0]"
+                                      : "bg-[#FAF0E6] text-[#AD5D3D]"
+                                  }`}
+                                >
+                                  {req.status}
+                                </span>
+                                {isEmergency && (
+                                  <span className="text-[10px] font-bold text-[#B42318] flex items-center gap-1">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Urgent
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4 whitespace-nowrap">
+                              <div className="font-bold text-[#211C19]">
+                                {req.patient?.bedLabel || "Bed Unassigned"}
+                              </div>
+                              <div className="text-[11px] text-[#76685F]">
+                                {req.patient?.displayName || "Patient"} ({req.patient?.patientCode || "N/A"})
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4">
+                              <div className="font-semibold text-[#211C19]">
+                                {req.action.replace("_", " ")}
+                              </div>
+                              <div className="text-[11px] text-[#76685F] font-mono">
+                                ESP32 Telemetry Trigger
+                              </div>
+                            </td>
+                            <td className="py-3.5 px-4 whitespace-nowrap font-mono text-[11px] text-[#76685F]">
+                              {formatElapsedTime(req.createdAt)}
+                            </td>
+                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              {req.status === "NEW" && (
+                                <button
+                                  type="button"
+                                  onClick={() => promptStepConfirmation(req, "ACKNOWLEDGED")}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
+                                    isEmergency
+                                      ? "bg-[#B42318] hover:bg-[#912018] text-white"
+                                      : "bg-[#AD5D3D] hover:bg-[#964F33] text-white"
+                                  }`}
+                                >
+                                  Acknowledge
+                                </button>
+                              )}
+                              {req.status === "ACKNOWLEDGED" && (
+                                <button
+                                  type="button"
+                                  onClick={() => promptStepConfirmation(req, "IN_PROGRESS")}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2B6CB0] hover:bg-[#23588F] text-white transition shadow-xs"
+                                >
+                                  Start Handling
+                                </button>
+                              )}
+                              {req.status === "IN_PROGRESS" && (
+                                <button
+                                  type="button"
+                                  onClick={() => promptStepConfirmation(req, "RESOLVED")}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#42765A] hover:bg-[#355F49] text-white transition shadow-xs"
+                                >
+                                  Mark Resolved
+                                </button>
+                              )}
+                              {req.status === "RESOLVED" && (
+                                <span className="text-[11px] font-semibold text-[#42765A] inline-flex items-center gap-1">
+                                  <Check className="w-3.5 h-3.5" />
+                                  Closed
+                                </span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 3: PATIENT REGISTRY & CARE MANAGEMENT */}
+        {activeTab === "patients" && (
+          <div className="space-y-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
+                  Patient Registry &amp; Bedside Allocation
+                </h1>
+                <p className="text-xs text-[#76685F] font-medium mt-0.5">
+                  Direct Nurse Care Allocation &amp; Telemetry Streams
+                </p>
+              </div>
+            </div>
+
+            {/* Patients Grid */}
+            {patients.length === 0 ? (
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-3">
+                <div className="w-12 h-12 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center mx-auto">
+                  <User className="w-6 h-6" />
+                </div>
+                <h3 className="font-heading font-bold text-base text-[#211C19]">
+                  No Patients Available
+                </h3>
+                <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
+                  Patients will appear here automatically as soon as they sign up on NetraVaani.
+                </p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {patients.map((pt) => {
+                  const assignedDevice = pt.currentAssignment?.device;
+                  const nurseAuth = pt.nurseAssignment;
+                  return (
+                    <div
+                      key={pt._id}
+                      className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] hover:border-[#42765A] rounded-2xl p-4 sm:p-5 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between space-y-4 relative overflow-hidden group"
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#42765A] via-[#5EA780] to-[#42765A]" />
+                      <div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-xs font-mono font-bold text-[#76685F]">
+                            {pt.patientCode}
+                          </span>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EDF5F0] text-[#42765A]">
+                            {pt.bedLabel || "Bed Unassigned"}
+                          </span>
+                        </div>
+
+                        <h3 className="font-heading font-bold text-base text-[#211C19] mt-2">
+                          {pt.displayName}
+                        </h3>
+
+                        {/* Device allocation */}
+                        <div className="mt-3 pt-3 border-t border-[#E5D9CA]/80 space-y-1.5 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[#76685F]">Assigned Device:</span>
+                            <span className="font-mono font-bold text-[#211C19]">
+                              {assignedDevice?.name || assignedDevice?.deviceId || "No Device Linked"}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-[#76685F]">Care Link Status:</span>
+                            <span
+                              className={`font-semibold ${
+                                nurseAuth?.status === "APPROVED"
+                                  ? "text-[#42765A]"
+                                  : nurseAuth?.status === "PENDING"
+                                  ? "text-[#AD5D3D]"
+                                  : "text-[#76685F]"
+                              }`}
+                            >
+                              {nurseAuth?.status || "NONE"}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions: Nurse Link */}
+                      <div className="pt-3 border-t border-[#E5D9CA]/80 space-y-2">
+
+                        {/* Nurse Authorization Link Button */}
+                        {nurseAuth?.status === "PENDING" ? (
+                          <div className="space-y-2">
+                            <div className="text-center text-xs text-[#AD5D3D] font-semibold py-1">
+                              Awaiting bedside screen approval
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                disabled={nurseAssignLoading[pt.patientCode]}
+                                onClick={() => handleDirectAllocatePatient(pt.patientCode)}
+                                className="flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs"
+                              >
+                                Allocate Directly
+                              </button>
+                              <button
+                                type="button"
+                                disabled={nurseAssignLoading[pt.patientCode]}
+                                onClick={() => handleDeallocatePatient(pt.patientCode)}
+                                className="py-1.5 px-2.5 rounded-xl text-[11px] font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:bg-[#FEF3F2] transition text-center shadow-xs"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          </div>
+                        ) : nurseAuth?.status === "APPROVED" ? (
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-center gap-1.5 text-xs text-[#42765A] font-semibold py-1">
+                              <Check className="w-3.5 h-3.5" />
+                              <span>Linked to {nurseAuth.nurseName || "Nurse"}</span>
+                            </div>
+                            <button
+                              type="button"
+                              disabled={nurseAssignLoading[pt.patientCode]}
+                              onClick={() => handleDeallocatePatient(pt.patientCode)}
+                              className="w-full py-1.5 px-3 rounded-xl text-xs font-bold bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] hover:bg-[#FEE4E2] transition text-center shadow-xs"
+                            >
+                              {nurseAssignLoading[pt.patientCode] ? "Deallocating..." : "Deallocate Patient"}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              disabled={nurseAssignLoading[pt.patientCode]}
+                              onClick={() => handleDirectAllocatePatient(pt.patientCode)}
+                              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs"
+                            >
+                              {nurseAssignLoading[pt.patientCode] ? "Allocating..." : "Allocate Patient"}
+                            </button>
+                            <button
+                              type="button"
+                              title="Send approval request to bedside"
+                              disabled={nurseAssignLoading[pt.patientCode]}
+                              onClick={() => handleRequestPatientAssignment(pt.patientCode)}
+                              className="py-2 px-2.5 rounded-xl text-xs font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#211C19] hover:bg-[#F7F2EB] transition text-center shadow-xs"
+                            >
+                              Request Link
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* TAB 4: DEVICES (Device Management) */}
+        {activeTab === "devices" && (
+          <div className="space-y-6">
+            
+            {/* Header with Breadcrumb */}
+            <div>
+              <div className="text-[11px] font-bold text-[#AD5D3D] uppercase tracking-wider">
+                HARDWARE OPERATIONS / REGISTRY
+              </div>
+              <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-[#211C19] tracking-tight mt-1">
+                Device Management
+              </h1>
+              <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-1">
+                Register bedside gateways, manage patient assignments, and monitor incoming telemetry.
+              </p>
+            </div>
+
+            {/* 4 Stat Cards Row (100% Real from DB) */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
+              
+              {/* Registered devices */}
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-[#AD5D3D]">
+                  <Cpu className="w-4 h-4" />
+                  <span className="text-xs font-semibold text-[#76685F]">Registered devices</span>
+                </div>
+                <div className="mt-2 font-heading text-3xl font-extrabold text-[#211C19] tracking-tight">
+                  {String(devices.length).padStart(2, "0")}
+                </div>
+                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Registered units</span>
+              </div>
+
+              {/* Online */}
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-[#42765A]">
+                  <Radio className="w-4 h-4" />
+                  <span className="text-xs font-semibold text-[#76685F]">Online</span>
+                </div>
+                <div className="mt-2 font-heading text-3xl font-extrabold text-[#42765A] tracking-tight">
+                  {String(connectedDevicesCount).padStart(2, "0")}
+                </div>
+                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Reachable gateways</span>
+              </div>
+
+              {/* Assigned */}
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-[#2B6CB0]">
+                  <Bed className="w-4 h-4" />
+                  <span className="text-xs font-semibold text-[#76685F]">Assigned</span>
+                </div>
+                <div className="mt-2 font-heading text-3xl font-extrabold text-[#2B6CB0] tracking-tight">
+                  {String(devices.filter((d) => d.currentAssignment).length).padStart(2, "0")}
+                </div>
+                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Patient-bed links</span>
+              </div>
+
+              {/* Telemetry alerts */}
+              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
+                <div className="flex items-center gap-2 text-[#AD5D3D]">
+                  <Activity className="w-4 h-4" />
+                  <span className="text-xs font-semibold text-[#76685F]">Telemetry alerts</span>
+                </div>
+                <div className="mt-2 font-heading text-3xl font-extrabold text-[#AD5D3D] tracking-tight">
+                  {String(urgentCallsCount).padStart(2, "0")}
+                </div>
+                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Requires review</span>
+              </div>
+            </div>
+
+            {/* Register a bedside device (Commissioning Wizard Card) */}
+            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-4">
+              
+              <div className="flex items-start gap-3.5">
+                <div className="w-10 h-10 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center shrink-0 border border-[#E2C7B8]">
+                  <Bluetooth className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
+                    Register a bedside device
+                  </h2>
+                  <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-0.5">
+                    Commission an NPG Lite gateway and connect it to hospital Wi-Fi.
+                  </p>
+                </div>
+              </div>
+
+              {/* 4-Step Wizard Tiles Grid */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
+                
+                {/* Step 1 */}
+                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
+                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
+                    STEP 01
+                  </div>
+                  <div className="text-[#AD5D3D] my-1.5">
+                    <Bluetooth className="w-4 h-4" />
+                  </div>
+                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
+                    Discover hardware
+                  </div>
+                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
+                    Find nearby NPG Lite devices
+                  </div>
+                </div>
+
+                {/* Step 2 */}
+                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
+                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
+                    STEP 02
+                  </div>
+                  <div className="text-[#AD5D3D] my-1.5">
+                    <Wifi className="w-4 h-4" />
+                  </div>
+                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
+                    Configure network
+                  </div>
+                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
+                    Provision Wi-Fi and verify connection
+                  </div>
+                </div>
+
+                {/* Step 3 */}
+                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
+                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
+                    STEP 03
+                  </div>
+                  <div className="text-[#AD5D3D] my-1.5">
+                    <Cpu className="w-4 h-4" />
+                  </div>
+                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
+                    Register device
+                  </div>
+                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
+                    Save hardware ID and metadata
+                  </div>
+                </div>
+
+                {/* Step 4 */}
+                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
+                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
+                    STEP 04
+                  </div>
+                  <div className="text-[#AD5D3D] my-1.5">
+                    <Activity className="w-4 h-4" />
+                  </div>
+                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
+                    Verify telemetry
+                  </div>
+                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
+                    Confirm real events reach the API
+                  </div>
+                </div>
+              </div>
+
+              {/* CTA Button: Design commissioning wizard → */}
+              <button
+                type="button"
+                onClick={() => setIsBleModalOpen(true)}
+                className="w-full py-3 px-5 rounded-xl font-bold text-xs sm:text-sm bg-[#211C19] hover:bg-[#362E2A] text-white transition shadow-sm flex items-center justify-center gap-2"
+              >
+                <span>Design commissioning wizard</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Registered Devices List (100% Real from DB) */}
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
+                      Registered devices
+                    </h2>
+                    <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-full bg-[#FAF0E6] text-[#AD5D3D] border border-[#E2C7B8]">
+                      {devices.length} devices
+                    </span>
+                  </div>
+                  <p className="text-xs text-[#76685F] font-medium mt-0.5">
+                    Hardware inventory and assignment status
+                  </p>
+                </div>
+              </div>
+
+              {/* Devices Cards */}
+              {devices.length === 0 ? (
+                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-3">
+                  <div className="w-12 h-12 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center mx-auto">
+                    <Cpu className="w-6 h-6" />
+                  </div>
+                  <h3 className="font-heading font-bold text-base text-[#211C19]">
+                    No Bedside Gateways Registered Yet
+                  </h3>
+                  <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
+                    Commission an ESP32-S3 bedside gateway using Web Bluetooth or register hardware directly below.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setIsBleModalOpen(true)}
+                    className="mt-2 px-4 py-2 rounded-xl text-xs font-bold bg-[#AD5D3D] text-white hover:bg-[#964F33] transition"
+                  >
+                    + Commission Gateway via BLE
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3.5">
+                  {devices.map((d) => (
+                    <div
+                      key={d._id}
+                      className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] hover:border-[#42765A] rounded-2xl p-4 sm:p-5 shadow-subtle hover:shadow-hover hover:-translate-y-0.5 transition-all duration-200 space-y-3 relative overflow-hidden group"
+                    >
+                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#42765A] via-[#5EA780] to-[#42765A]" />
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 rounded-xl bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] flex items-center justify-center shrink-0">
+                            <Cpu className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h3 className="font-heading font-bold text-sm sm:text-base text-[#211C19]">
+                              {d.name || d.deviceId}
+                            </h3>
+                            <div className="text-xs font-mono text-[#76685F]">
+                              {d.hardwareId || d.deviceId} · FW {d.firmwareVersion || "v1.1.1"}
+                            </div>
+                          </div>
+                        </div>
+                        <span
+                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
+                            d.connectivityStatus === "ONLINE" || d.status === "AVAILABLE" || d.status === "ASSIGNED"
+                              ? "bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]"
+                              : "bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]"
+                          }`}
+                        >
+                          {d.connectivityStatus === "ONLINE" ? "Online" : d.status}
+                        </span>
+                      </div>
+
+                      <div className="pt-2 border-t border-[#E5D9CA]/80 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
+                        <div>
+                          <span className="text-[#76685F] block">Assigned bed</span>
+                          <span className="font-bold text-[#211C19]">
+                            {d.currentAssignment?.patient?.bedLabel || "Unassigned"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[#76685F] block">Patient</span>
+                          <span className="font-bold text-[#211C19]">
+                            {d.currentAssignment?.patient?.displayName || "Unassigned"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="text-[#76685F] block">Last telemetry</span>
+                          <span className="font-mono text-[#76685F]">
+                            {formatElapsedTime(d.lastSeenAt || d.updatedAt)}
+                          </span>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => setSelectedDeviceDetails(d)}
+                        className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                      >
+                        <span>View device details</span>
+                        <ArrowUpRight className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {/* Bottom Status */}
+            <div className="text-center py-2">
+              <p className="text-[11px] text-[#76685F] font-medium">
+                Hardware registry connected to NetraVaani device management cluster.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* TAB 5: HISTORY */}
+        {activeTab === "history" && (
+          <div className="space-y-6">
+            <div>
+              <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
+                Clinical Shift History
+              </h1>
+              <p className="text-xs text-[#76685F] font-medium mt-0.5">
+                Audit trail of care resolutions and bedside telemetry alerts
+              </p>
+            </div>
+
+            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 shadow-subtle divide-y divide-[#E5D9CA]/80">
+              {requests
+                .filter((r) => r.status === "RESOLVED")
+                .map((req) => (
+                  <div key={req._id} className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <div className="mt-0.5 text-[#42765A]">
+                        <CheckCircle2 className="w-4 h-4" />
+                      </div>
+                      <div>
+                        <div className="font-bold text-xs sm:text-sm text-[#211C19]">
+                          Resolved: {req.action.replace("_", " ")} · {req.patient?.bedLabel || "Bedside"}
+                        </div>
+                        <div className="text-xs text-[#76685F] mt-0.5">
+                          Patient {req.patient?.displayName || "Patient"} ({req.patient?.patientCode || "N/A"}) · Handled by nursing station
+                        </div>
+                      </div>
+                    </div>
+                    <span className="font-mono text-xs text-[#76685F]">
+                      {formatTimeOnly(req.resolvedAt || req.updatedAt)}
+                    </span>
+                  </div>
+                ))}
+              {requests.filter((r) => r.status === "RESOLVED").length === 0 && (
+                <div className="py-6 text-center text-xs text-[#76685F]">
+                  No resolved records yet for this clinical shift.
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+      </div>
+
+
+
+      {/* IN-PLACE CONFIRMATION DIALOG (Crucial: Does NOT jump to top of page) */}
       {stepConfirm && (
-        <div className="fixed inset-0 z-50 bg-[#1C140F]/65 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#FFFCF7] border-2 border-[#D6C7B7] rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-center justify-between border-b border-[#E7DFD4] pb-3">
-              <div className="flex items-center gap-2">
-                <span className="p-1.5 rounded-lg bg-[#EED9CD] text-[#C56845] border border-[#D6C7B7]">
-                  <CheckCircle2 className="w-4 h-4" />
-                </span>
-                <h3 className="font-serif font-black text-lg text-[#1C140F]">
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#211C19]/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
+                  <Shield className="w-5 h-5" />
+                </div>
+                <h3 className="font-heading font-bold text-base text-[#211C19]">
                   {stepConfirm.stepTitle}
                 </h3>
               </div>
               <button
                 type="button"
                 onClick={() => setStepConfirm(null)}
-                className="text-[#75665D] hover:text-[#1C140F] p-1 rounded-lg"
+                className="text-[#76685F] hover:text-[#211C19] p-1"
               >
-                <X className="w-5 h-5" />
+                <X className="w-4 h-4" />
               </button>
             </div>
 
-            <div className="p-3.5 rounded-xl bg-[#F5F0E8] border border-[#E7DFD4] space-y-2">
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase">Patient:</span>
-                <span className="font-serif font-black text-[#1C140F] text-sm">
-                  {stepConfirm.request.patient?.displayName || "Unknown Patient"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase">Bed / Location:</span>
-                <span className="font-mono font-bold text-[#1C140F]">
-                  {stepConfirm.request.patient?.bedLabel || "Bed Unassigned"}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase">Action / Command:</span>
-                <span className="font-mono font-black text-[#C56845]">
-                  {stepConfirm.request.action}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase">Target Step:</span>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-mono font-black bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]">
-                  {stepConfirm.nextStep}
-                </span>
-              </div>
-            </div>
-
-            <p className="text-xs font-serif font-bold text-[#30251F] leading-relaxed">
+            <p className="text-xs sm:text-sm text-[#76685F] mt-3 leading-relaxed">
               {stepConfirm.stepDescription}
             </p>
 
-            <div className="pt-2 flex items-center justify-end gap-3 border-t border-[#E7DFD4]">
+            <div className="mt-5 pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2.5">
               <button
                 type="button"
                 onClick={() => setStepConfirm(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[#75665D] hover:text-[#1C140F] border border-[#E7DFD4] hover:bg-[#F5F0E8] transition"
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleConfirmNextStep}
                 disabled={actionLoadingMap[stepConfirm.request._id]}
-                className={`px-5 py-2 rounded-xl text-xs font-black shadow-sm transition flex items-center gap-1.5 disabled:opacity-50 ${stepConfirm.actionButtonColor}`}
+                onClick={handleConfirmNextStep}
+                className={`px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs ${stepConfirm.actionButtonColor}`}
               >
-                {actionLoadingMap[stepConfirm.request._id] ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Check className="w-3.5 h-3.5" />
-                )}
-                <span>{stepConfirm.actionButtonLabel}</span>
+                {actionLoadingMap[stepConfirm.request._id] ? "Updating..." : stepConfirm.actionButtonLabel}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* REQUEST DETAILS MODAL */}
-      {selectedRequest && (
-        <div className="fixed inset-0 z-50 bg-[#1C140F]/65 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#FFFCF7] border border-[#E7DFD4] rounded-2xl max-w-lg w-full p-6 space-y-4 shadow-2xl">
-            <div className="flex items-center justify-between border-b border-[#E7DFD4] pb-3">
-              <div className="flex items-center gap-2">
-                <span
-                  className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-black uppercase tracking-wider ${
-                    selectedRequest.status === "NEW"
-                      ? "bg-[#C56845] text-[#FFFCF7]"
-                      : selectedRequest.status === "ACKNOWLEDGED"
-                      ? "bg-[#EED9CD] text-[#7A361E] border border-[#D6C7B7]"
-                      : selectedRequest.status === "IN_PROGRESS"
-                      ? "bg-[#F4DFC8] text-[#8C4318] border border-[#DFBA9C]"
-                      : "bg-[#E8E2D7] text-[#1C140F] border border-[#D6C7B7]"
-                  }`}
-                >
-                  {selectedRequest.status.replace("_", " ")}
-                </span>
-                <h3 className="font-serif font-black text-xl text-[#1C140F]">Request Details</h3>
-              </div>
-              <button
-                onClick={() => setSelectedRequest(null)}
-                className="text-[#75665D] hover:text-[#1C140F] p-1 rounded-lg"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
 
-            {/* Request Summary Box */}
-            <div className="p-4 rounded-xl bg-[#F5F0E8] border border-[#E7DFD4] space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-[#75665D] font-mono font-bold uppercase tracking-wider">
-                  Request Action
-                </span>
-                <span
-                  className={`px-3 py-0.5 rounded-lg text-xs font-mono font-bold border ${
-                    ACTION_CONFIG[selectedRequest.action]?.badge || "bg-[#FFFCF7]"
-                  }`}
-                >
-                  {ACTION_CONFIG[selectedRequest.action]?.label || selectedRequest.action}
-                </span>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase tracking-wider">
-                  Physical Action
-                </span>
-                <strong className="font-bold text-[#1C140F]">
-                  {ACTION_CONFIG[selectedRequest.action]?.gestureDescription || selectedRequest.gesture || selectedRequest.gestureId}
-                </strong>
-              </div>
-              <div className="flex items-center justify-between text-xs">
-                <span className="text-[#75665D] font-mono font-bold uppercase tracking-wider">
-                  Serial Stream
-                </span>
-                <span className="font-mono font-bold text-[#7A361E]">
-                  {ACTION_CONFIG[selectedRequest.action]?.serial || `[cmd] ${selectedRequest.action}`}
-                </span>
-              </div>
-            </div>
 
-            {/* Patient & Bed Information */}
-            <div className="space-y-1.5">
-              <h4 className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#75665D]">
-                Patient &amp; Bed Information
-              </h4>
-              <div className="grid grid-cols-2 gap-2 text-xs bg-[#FFFCF7] p-3 rounded-xl border border-[#E7DFD4]">
-                <div>
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Patient Name</span>
-                  <strong className="text-[#1C140F] text-sm font-serif font-black">
-                    {selectedRequest.patient?.displayName || "N/A"}
-                  </strong>
-                </div>
-                <div>
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Bed Label</span>
-                  <strong className="text-[#1C140F] text-sm font-serif font-black">
-                    {selectedRequest.patient?.bedLabel || "Unassigned"}
-                  </strong>
-                </div>
-                <div className="mt-1">
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Patient Code</span>
-                  <span className="font-mono font-bold text-[#1C140F]">
-                    {selectedRequest.patient?.patientCode || "N/A"}
-                  </span>
-                </div>
-                <div className="mt-1">
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Patient Status</span>
-                  <span className="font-mono font-bold text-[#7A361E]">
-                    {selectedRequest.patient?.status || "ACTIVE"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Device Information */}
-            <div className="space-y-1.5">
-              <h4 className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#75665D]">
-                Assigned Device (1-to-1 Device Allocation)
-              </h4>
-              <div className="grid grid-cols-2 gap-2 text-xs bg-[#FFFCF7] p-3 rounded-xl border border-[#E7DFD4]">
-                <div>
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Device Name</span>
-                  <span className="font-serif font-black text-[#1C140F]">
-                    {selectedRequest.device?.name || "NPG Lite"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-[#75665D] block text-[11px] font-mono font-bold">Device Identifier</span>
-                  <span className="font-mono font-bold text-[#1C140F]">
-                    {selectedRequest.device?.deviceId || "N/A"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Lifecycle Audit Timeline */}
-            <div className="space-y-1.5">
-              <h4 className="text-[11px] font-mono font-bold uppercase tracking-widest text-[#75665D]">
-                Lifecycle Audit Timestamps
-              </h4>
-              <div className="p-3 rounded-xl bg-[#F5F0E8] border border-[#E7DFD4] text-xs space-y-2">
-                <div className="flex items-center justify-between text-[#1C140F]">
-                  <span className="flex items-center gap-1.5 text-[#75665D] font-bold">
-                    <Clock className="w-3.5 h-3.5 text-[#75665D]" />
-                    Created:
-                  </span>
-                  <span className="font-mono font-bold">{new Date(selectedRequest.createdAt).toLocaleString()}</span>
-                </div>
-                <div className="flex items-center justify-between text-[#1C140F]">
-                  <span className="flex items-center gap-1.5 text-[#75665D] font-bold">
-                    <Check className="w-3.5 h-3.5 text-[#C56845]" />
-                    Acknowledged:
-                  </span>
-                  <span className="font-mono font-bold">
-                    {selectedRequest.acknowledgedAt
-                      ? new Date(selectedRequest.acknowledgedAt).toLocaleString()
-                      : "Pending"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[#1C140F]">
-                  <span className="flex items-center gap-1.5 text-[#75665D] font-bold">
-                    <Play className="w-3.5 h-3.5 text-[#8C4318] fill-[#8C4318]" />
-                    In Progress:
-                  </span>
-                  <span className="font-mono font-bold">
-                    {selectedRequest.inProgressAt
-                      ? new Date(selectedRequest.inProgressAt).toLocaleString()
-                      : "Not Started"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between text-[#1C140F]">
-                  <span className="flex items-center gap-1.5 text-[#75665D] font-bold">
-                    <CheckCircle2 className="w-3.5 h-3.5 text-[#75665D]" />
-                    Resolved:
-                  </span>
-                  <span className="font-mono font-bold">
-                    {selectedRequest.resolvedAt
-                      ? new Date(selectedRequest.resolvedAt).toLocaleString()
-                      : "Unresolved"}
-                  </span>
-                </div>
-              </div>
-            </div>
-
-            {/* Modal Actions */}
-            <div className="pt-2 flex items-center justify-between gap-3 border-t border-[#E7DFD4]">
+      {/* DEVICE DETAILS MODAL */}
+      {selectedDeviceDetails && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#211C19]/40 backdrop-blur-xs flex items-center justify-center p-4"
+        >
+          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-heading font-bold text-base text-[#211C19]">
+                Device Telemetry Details
+              </h3>
               <button
                 type="button"
-                onClick={() => setSelectedRequest(null)}
-                className="px-4 py-2 rounded-xl text-xs font-bold text-[#75665D] hover:text-[#1C140F] border border-[#E7DFD4] hover:bg-[#F5F0E8] transition"
+                onClick={() => setSelectedDeviceDetails(null)}
+                className="text-[#76685F] hover:text-[#211C19] p-1"
               >
-                Close
+                <X className="w-4 h-4" />
               </button>
+            </div>
 
-              <div className="flex items-center gap-2">
-                {selectedRequest.status === "NEW" && (
-                  <button
-                    onClick={() => {
-                      promptStepConfirmation(selectedRequest, "ACKNOWLEDGED");
-                    }}
-                    disabled={actionLoadingMap[selectedRequest._id]}
-                    className="px-4 py-2 rounded-xl text-xs font-black bg-[#C56845] text-[#FFFCF7] hover:bg-[#B05534] transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    <Check className="w-3.5 h-3.5" />
-                    Acknowledge Request
-                  </button>
-                )}
-
-                {selectedRequest.status === "ACKNOWLEDGED" && (
-                  <button
-                    onClick={() => {
-                      promptStepConfirmation(selectedRequest, "IN_PROGRESS");
-                    }}
-                    disabled={actionLoadingMap[selectedRequest._id]}
-                    className="px-4 py-2 rounded-xl text-xs font-black bg-[#EED9CD] text-[#7A361E] hover:bg-[#DFBA9C] transition shadow-xs disabled:opacity-50 flex items-center gap-1.5 border border-[#D6C7B7]"
-                  >
-                    <Play className="w-3.5 h-3.5 fill-[#7A361E]" />
-                    Start Handling
-                  </button>
-                )}
-
-                {selectedRequest.status === "IN_PROGRESS" && (
-                  <button
-                    onClick={() => {
-                      promptStepConfirmation(selectedRequest, "RESOLVED");
-                    }}
-                    disabled={actionLoadingMap[selectedRequest._id]}
-                    className="px-4 py-2 rounded-xl text-xs font-black bg-[#1C140F] text-[#FFFCF7] hover:bg-[#30251F] transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    Mark as Resolved
-                  </button>
-                )}
+            <div className="space-y-2.5 text-xs">
+              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
+                <span className="text-[#76685F]">Device Name</span>
+                <span className="font-bold text-[#211C19]">{selectedDeviceDetails.name}</span>
               </div>
+              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
+                <span className="text-[#76685F]">Device ID</span>
+                <span className="font-mono text-[#211C19]">{selectedDeviceDetails.deviceId}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
+                <span className="text-[#76685F]">Firmware Version</span>
+                <span className="font-mono text-[#211C19]">{selectedDeviceDetails.firmwareVersion || "v1.1.1"}</span>
+              </div>
+              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
+                <span className="text-[#76685F]">Connectivity</span>
+                <span className="font-bold text-[#42765A]">{selectedDeviceDetails.connectivityStatus || "ONLINE"}</span>
+              </div>
+              <div className="flex justify-between py-1">
+                <span className="text-[#76685F]">Assigned Bed</span>
+                <span className="font-bold text-[#211C19]">
+                  {selectedDeviceDetails.currentAssignment?.patient?.bedLabel || "Unassigned"}
+                </span>
+              </div>
+            </div>
+
+            <div className="mt-5 pt-3 border-t border-[#E5D9CA] text-right">
+              <button
+                type="button"
+                onClick={() => setSelectedDeviceDetails(null)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#211C19] text-white hover:bg-[#362E2A] transition"
+              >
+                Done
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* FLOATING TOAST NOTIFICATION (BOTTOM-RIGHT, NEVER DISRUPTS SCROLL) */}
-      {toastMsg && (
-        <div className="fixed bottom-6 right-6 z-50 animate-in fade-in slide-in-from-bottom-4 duration-200">
-          <div
-            className={`px-4 py-3 rounded-2xl shadow-xl flex items-center gap-3 border text-xs font-bold ${
-              toastMsg.isError
-                ? "bg-[#EED9CD] border-[#C56845] text-[#7A361E]"
-                : "bg-[#FFFCF7] border-[#D6C7B7] text-[#1C140F]"
-            }`}
-          >
-            {toastMsg.isError ? (
-              <AlertTriangle className="w-4 h-4 text-[#C56845] shrink-0" />
-            ) : (
-              <CheckCircle2 className="w-4 h-4 text-[#C56845] shrink-0" />
-            )}
-            <span>{toastMsg.text}</span>
-            <button
-              onClick={() => setToastMsg(null)}
-              className="text-[#75665D] hover:text-[#1C140F] ml-1"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Editorial Footer */}
-      <footer className="border-t border-[#E7DFD4] bg-[#FFFCF7] py-6 text-center text-xs text-[#30251F] font-bold mt-auto">
-        <div className="max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center justify-between gap-2">
-          <span className="font-serif font-black italic">
-            NetraVaani Assistive HealthTech &bull; In-Place Clinical Response System
-          </span>
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#C56845]"></span>
-              Terracotta (#C56845)
-            </span>
-            <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#EED9CD]"></span>
-              Soft Accent (#EED9CD)
-            </span>
-            <span className="flex items-center gap-1.5 font-mono text-[11px] font-bold">
-              <span className="w-2.5 h-2.5 rounded-full bg-[#1C140F]"></span>
-              Espresso (#1C140F)
-            </span>
-          </div>
-        </div>
-      </footer>
+      {/* BLE COMMISSIONING MODAL */}
+      <BleCommissioningModal
+        isOpen={isBleModalOpen}
+        onClose={() => setIsBleModalOpen(false)}
+        registeredBy={user?.email || user?.username || user?.name}
+        onDeviceCommissioned={(dev) => {
+          setIsBleModalOpen(false);
+          showToast(`Gateway ${dev.name || dev.deviceId} successfully commissioned!`);
+          fetchAuxData();
+        }}
+      />
     </div>
   );
 }

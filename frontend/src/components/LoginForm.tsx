@@ -2,275 +2,301 @@
 
 import React, { useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { Shield, Bed, Mail } from "@/lib/noIcons";
 
-export default function LoginPage() {
+export default function LoginForm() {
   const { login, register } = useAuth();
-  const [mode, setMode] = useState<"login" | "register">("login");
 
-  // Login form state
-  const [identifier, setIdentifier] = useState("nurse");
-  const [loginPassword, setLoginPassword] = useState("nurse123");
-  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  // Mode: Sign In or Sign Up
+  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
 
-  // Register form state
-  const [regName, setRegName] = useState("");
-  const [regEmail, setRegEmail] = useState("");
-  const [regPassword, setRegPassword] = useState("");
-  const [regRole, setRegRole] = useState("nurse");
+  // Role for Sign Up: Strictly Patient or Nurse
+  const [signupRole, setSignupRole] = useState<"patient" | "nurse">("patient");
 
+  // Form Fields
+  const [name, setName] = useState("");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+
+  // Status
   const [error, setError] = useState<string | null>(null);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const handleLoginSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
-    setInfoMessage(null);
+    setSuccessMsg(null);
     setLoading(true);
 
     try {
-      await login(identifier, loginPassword);
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Failed to sign in";
-      setError(msg);
-    } finally {
-      setLoading(false);
-    }
-  };
+      if (authMode === "signup") {
+        if (!name.trim()) throw new Error("Full name is required");
+        if (!identifier.trim()) throw new Error("Email address is required");
+        if (!password || password.length < 6) {
+          throw new Error("Password must be at least 6 characters");
+        }
 
-  const handleRegisterSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    setInfoMessage(null);
-    setLoading(true);
+        await register(name.trim(), identifier.trim(), password, signupRole);
+        setSuccessMsg(
+          `Account registered for ${name.trim()} (${
+            signupRole === "patient" ? "Patient" : "Nurse"
+          })! Please check your email to verify your account.`
+        );
+        // Switch to login tab so user can immediately sign in
+        setAuthMode("login");
+      } else {
+        // Sign In (Unified credentials - role is automatically determined by account)
+        if (!identifier.trim()) throw new Error("Please enter your email or username");
+        if (!password) throw new Error("Password is required");
 
-    try {
-      const res = await register(regName, regEmail, regPassword, regRole);
-      if (res.status === "success") {
-        setInfoMessage("Registration successful! A verification link has been sent to your inbox.");
-        setMode("login");
-        setIdentifier(regEmail);
-        setLoginPassword("");
+        await login(identifier.trim(), password);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Registration failed");
+      setError(err instanceof Error ? err.message : "Authentication failed");
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F5F0E8] text-[#30251F] flex flex-col justify-center py-16 px-4 sm:px-6 lg:px-8 selection:bg-[#EED9CD]">
-      {/* Editorial Header / Masthead */}
+    <div className="min-h-screen bg-[#F5F1E9] text-[#211C19] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 selection:bg-[#AD5D3D]/20">
+      {/* Brand Header */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
-        <div className="inline-flex items-center gap-2 border-b border-[#E7DFD4] pb-1 mb-2">
-          <span className="text-[10px] uppercase font-mono tracking-widest text-[#75665D]">
-            Issue 04 &bull; Clinical Assistive Suite
-          </span>
+        <div className="flex items-center justify-center gap-2.5">
+          <div className="w-10 h-10 rounded-xl bg-[#211C19] text-[#FFFCF7] flex items-center justify-center font-heading font-black text-sm shadow-xs">
+            NV
+          </div>
+          <h1 className="font-heading text-3xl font-extrabold text-[#211C19] tracking-tight">
+            Netra<span className="font-wordmark font-normal text-[#AD5D3D]">Vaani</span>
+          </h1>
         </div>
-        <h1 className="font-serif text-4xl sm:text-5xl font-normal text-[#30251F] tracking-tight">
-          NetraVaani
-        </h1>
-        <p className="font-serif italic text-sm text-[#75665D]">
-          Assistive Communication &amp; Nurse Station Gateway
+        <p className="text-xs sm:text-sm font-medium text-[#76685F]">
+          Assistive Gaze &amp; Gesture Clinical Platform
         </p>
       </div>
 
-      <div className="mt-8 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-[#FFFCF7] py-8 px-6 sm:px-10 rounded-2xl border border-[#E7DFD4] shadow-sm">
-          {/* Editorial Tabs */}
-          <div className="flex border-b border-[#E7DFD4] mb-6">
+      <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
+        <div className="bg-[#FFFCF7] py-6 sm:py-7 px-6 sm:px-8 rounded-2xl border border-[#E5D9CA] shadow-card space-y-5">
+          
+          {/* Main Auth Mode Tabs: Sign In / Sign Up */}
+          <div className="grid grid-cols-2 p-1 bg-[#F5F1E9] border border-[#E5D9CA] rounded-xl text-xs font-bold">
             <button
               type="button"
               onClick={() => {
-                setMode("login");
+                setAuthMode("login");
                 setError(null);
-                setInfoMessage(null);
+                setSuccessMsg(null);
               }}
-              className={`flex-1 pb-3 text-center text-xs font-semibold uppercase tracking-wider transition relative ${
-                mode === "login"
-                  ? "text-[#C56845]"
-                  : "text-[#75665D] hover:text-[#30251F]"
+              className={`py-2 rounded-lg transition ${
+                authMode === "login"
+                  ? "bg-[#FFFCF7] text-[#211C19] shadow-xs border border-[#E5D9CA]"
+                  : "text-[#76685F] hover:text-[#211C19]"
               }`}
             >
               Sign In
-              {mode === "login" && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#C56845]" />
-              )}
             </button>
             <button
               type="button"
               onClick={() => {
-                setMode("register");
+                setAuthMode("signup");
                 setError(null);
-                setInfoMessage(null);
+                setSuccessMsg(null);
               }}
-              className={`flex-1 pb-3 text-center text-xs font-semibold uppercase tracking-wider transition relative ${
-                mode === "register"
-                  ? "text-[#C56845]"
-                  : "text-[#75665D] hover:text-[#30251F]"
+              className={`py-2 rounded-lg transition ${
+                authMode === "signup"
+                  ? "bg-[#FFFCF7] text-[#211C19] shadow-xs border border-[#E5D9CA]"
+                  : "text-[#76685F] hover:text-[#211C19]"
               }`}
             >
-              Register Account
-              {mode === "register" && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-[#C56845]" />
-              )}
+              Sign Up
             </button>
           </div>
 
-          {infoMessage && (
-            <div className="mb-5 p-3.5 bg-[#EED9CD]/60 border border-[#C56845]/40 text-[#30251F] rounded-xl text-xs font-medium leading-relaxed">
-              {infoMessage}
-            </div>
-          )}
-
+          {/* Feedback Alerts */}
           {error && (
-            <div className="mb-5 p-3.5 bg-[#F9ECE7] border border-[#C56845]/60 text-[#8C3A1E] rounded-xl text-xs font-medium leading-relaxed">
+            <div className="p-3 bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] rounded-xl text-xs font-semibold leading-relaxed">
               {error}
             </div>
           )}
 
-          {mode === "login" ? (
-            <form className="space-y-4" onSubmit={handleLoginSubmit}>
+          {successMsg && (
+            <div className="p-3.5 bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2.5 shadow-xs">
+              <Mail className="w-4 h-4 text-[#42765A] mt-0.5 shrink-0" />
               <div>
-                <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                  Email or Username
-                </label>
-                <div className="mt-1.5">
-                  <input
-                    type="text"
-                    required
-                    value={identifier}
-                    onChange={(e) => setIdentifier(e.target.value)}
-                    placeholder="nurse or nurse@hospital.org"
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] placeholder-[#A2948B] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  />
-                </div>
-                <p className="mt-1.5 text-[11px] text-[#A2948B]">
-                  Quick access: <code className="bg-[#F5F0E8] px-1 py-0.5 rounded text-[#30251F]">nurse</code> or <code className="bg-[#F5F0E8] px-1 py-0.5 rounded text-[#30251F]">admin</code>
-                </p>
+                <p className="font-bold text-[#211C19]">Please check your email</p>
+                <p className="text-[11px] text-[#42765A] mt-0.5 leading-relaxed">{successMsg}</p>
               </div>
-
-              <div>
-                <div className="flex items-center justify-between">
-                  <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                    Password
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => setShowLoginPassword(!showLoginPassword)}
-                    className="text-[11px] font-mono text-[#C56845] hover:text-[#B05534] transition"
-                  >
-                    {showLoginPassword ? "Hide" : "Show"}
-                  </button>
-                </div>
-                <div className="mt-1.5">
-                  <input
-                    type={showLoginPassword ? "text" : "password"}
-                    required
-                    value={loginPassword}
-                    onChange={(e) => setLoginPassword(e.target.value)}
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] placeholder-[#A2948B] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  />
-                </div>
-                <p className="mt-1.5 text-[11px] text-[#A2948B]">
-                  Default key: <code className="bg-[#F5F0E8] px-1 py-0.5 rounded text-[#30251F]">nurse123</code> or your registered password
-                </p>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full flex justify-center py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider font-bold text-white bg-[#C56845] hover:bg-[#B05534] focus:outline-none shadow-xs transition disabled:opacity-50"
-                >
-                  {loading ? "Authenticating..." : "Sign in to Platform"}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <form className="space-y-4" onSubmit={handleRegisterSubmit}>
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                  Full Name
-                </label>
-                <div className="mt-1.5">
-                  <input
-                    type="text"
-                    required
-                    value={regName}
-                    onChange={(e) => setRegName(e.target.value)}
-                    placeholder="Sister Priya or Dr. Sharma"
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] placeholder-[#A2948B] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                  Email Address
-                </label>
-                <div className="mt-1.5">
-                  <input
-                    type="email"
-                    required
-                    value={regEmail}
-                    onChange={(e) => setRegEmail(e.target.value)}
-                    placeholder="priya@hospital.org"
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] placeholder-[#A2948B] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                  Password
-                </label>
-                <div className="mt-1.5">
-                  <input
-                    type="password"
-                    required
-                    value={regPassword}
-                    onChange={(e) => setRegPassword(e.target.value)}
-                    placeholder="••••••••"
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] placeholder-[#A2948B] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-[11px] uppercase tracking-wider font-semibold text-[#75665D]">
-                  Clinical Role
-                </label>
-                <div className="mt-1.5">
-                  <select
-                    value={regRole}
-                    onChange={(e) => setRegRole(e.target.value)}
-                    className="appearance-none block w-full px-3.5 py-2.5 bg-[#FFFCF7] border border-[#E7DFD4] rounded-xl text-[#30251F] focus:outline-none focus:border-[#C56845] focus:ring-1 focus:ring-[#C56845] text-sm font-medium transition"
-                  >
-                    <option value="nurse">Nurse / Station Staff</option>
-                    <option value="doctor">Attending Physician</option>
-                    <option value="admin">Platform Administrator</option>
-                  </select>
-                </div>
-              </div>
-
-              <div className="pt-2">
-                <button
-                  type="submit"
-                  disabled={loading}
-                  className="w-full flex justify-center py-2.5 px-4 rounded-xl text-xs uppercase tracking-wider font-bold text-white bg-[#C56845] hover:bg-[#B05534] focus:outline-none shadow-xs transition disabled:opacity-50"
-                >
-                  {loading ? "Registering..." : "Register & Dispatch Verification"}
-                </button>
-              </div>
-            </form>
+            </div>
           )}
 
-          <div className="mt-6 pt-5 border-t border-[#E7DFD4] flex items-center justify-between text-[11px] text-[#A2948B]">
-            <span>Editorial UI &bull; No Tracking</span>
-            <span>HTTP-Only Session Token</span>
+          {/* Sign Up Role Selection (Only shown when signing up) */}
+          {authMode === "signup" && (
+            <div>
+              <label className="block text-[11px] font-bold uppercase tracking-wider text-[#76685F] mb-1.5 text-center">
+                Register Account As
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSignupRole("patient");
+                    setError(null);
+                  }}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition text-center gap-1 ${
+                    signupRole === "patient"
+                      ? "bg-[#EDF5F0] border-[#42765A] text-[#42765A] shadow-xs ring-1 ring-[#42765A]"
+                      : "bg-[#FFFCF7] border-[#E5D9CA] text-[#76685F] hover:border-[#42765A]/40"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-extrabold text-sm">
+                    <Bed className="w-4 h-4" />
+                    <span>Patient</span>
+                  </div>
+                  <span className="text-[10px] font-normal text-[#76685F]">
+                    Bedside Gaze Interface
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSignupRole("nurse");
+                    setError(null);
+                  }}
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition text-center gap-1 ${
+                    signupRole === "nurse"
+                      ? "bg-[#F5ECE6] border-[#AD5D3D] text-[#AD5D3D] shadow-xs ring-1 ring-[#AD5D3D]"
+                      : "bg-[#FFFCF7] border-[#E5D9CA] text-[#76685F] hover:border-[#AD5D3D]/40"
+                  }`}
+                >
+                  <div className="flex items-center gap-1.5 font-extrabold text-sm">
+                    <Shield className="w-4 h-4" />
+                    <span>Nurse</span>
+                  </div>
+                  <span className="text-[10px] font-normal text-[#76685F]">
+                    Clinical Station Desk
+                  </span>
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Form */}
+          <form onSubmit={handleSubmit} className="space-y-4">
+            {authMode === "signup" && (
+              <div>
+                <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+                  Full Name
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder={signupRole === "patient" ? "e.g. John Doe" : "e.g. Staff Nurse Maya"}
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+                />
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+                {authMode === "signup" ? "Email Address" : "Email or Username"}
+              </label>
+              <input
+                type={authMode === "signup" ? "email" : "text"}
+                required
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder={
+                  authMode === "signup"
+                    ? "Enter email address"
+                    : "Enter your email or username"
+                }
+                className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? "text" : "password"}
+                  required
+                  minLength={authMode === "signup" ? 6 : 1}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="Enter password"
+                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition pr-16"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  className="absolute right-3 top-2.5 text-xs text-[#76685F] hover:text-[#211C19] font-semibold"
+                >
+                  {showPassword ? "Hide" : "Show"}
+                </button>
+              </div>
+            </div>
+
+            <div className="pt-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className={`w-full py-3 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition shadow-sm disabled:opacity-50 ${
+                  authMode === "signup" && signupRole === "patient"
+                    ? "bg-[#42765A] hover:bg-[#355F49]"
+                    : "bg-[#AD5D3D] hover:bg-[#964F33]"
+                }`}
+              >
+                {loading
+                  ? "Processing..."
+                  : authMode === "signup"
+                  ? `Create ${signupRole === "patient" ? "Patient" : "Nurse"} Account`
+                  : "Sign In"}
+              </button>
+            </div>
+          </form>
+
+          {/* Toggle between Sign In and Sign Up */}
+          <div className="text-center pt-2">
+            {authMode === "login" ? (
+              <p className="text-xs text-[#76685F]">
+                Don&apos;t have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("signup");
+                    setError(null);
+                    setSuccessMsg(null);
+                  }}
+                  className="font-bold text-[#AD5D3D] hover:underline"
+                >
+                  Sign Up
+                </button>
+              </p>
+            ) : (
+              <p className="text-xs text-[#76685F]">
+                Already have an account?{" "}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode("login");
+                    setError(null);
+                    setSuccessMsg(null);
+                  }}
+                  className="font-bold text-[#AD5D3D] hover:underline"
+                >
+                  Sign In
+                </button>
+              </p>
+            )}
           </div>
+
         </div>
       </div>
     </div>

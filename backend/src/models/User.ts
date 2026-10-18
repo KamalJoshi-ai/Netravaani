@@ -8,7 +8,7 @@ export interface IUser extends Document {
   password?: string;
   passwordHash?: string;
   role: string;
-  referralCode?: string;
+  patientCode?: string;
   profilePicture?: string;
   isVerified: boolean;
   verificationToken?: string | null;
@@ -51,8 +51,9 @@ const UserSchema = new Schema<IUser>(
       type: String,
       default: "nurse",
     },
-    referralCode: {
+    patientCode: {
       type: String,
+      trim: true,
       sparse: true,
     },
     profilePicture: {
@@ -99,4 +100,6 @@ UserSchema.methods.comparePassword = async function (
 };
 
 export const User = mongoose.model<IUser>("User", UserSchema);
+export const Nurse = User;
+export type INurse = IUser;
 export default User;

@@ -109,6 +109,7 @@ export const connectWifiDevice = async (req: Request, res: Response, next: NextF
       name,
       firmwareVersion,
       ipAddress,
+      registeredBy: req.body.registeredBy,
     });
 
     res.status(200).json({
@@ -128,7 +129,8 @@ export const listDevices = async (req: Request, res: Response, next: NextFunctio
       query.page,
       query.limit,
       query.status,
-      query.connectivityStatus
+      query.connectivityStatus,
+      query.registeredBy
     );
     res.status(200).json({
       status: "success",
