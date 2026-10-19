@@ -16,6 +16,10 @@ export interface ICareRequest extends Document {
   gestureId: string;
   gesture?: string;
   urgent?: boolean;
+  alarm?: boolean;
+  ruleId?: string; // command rule that fired (firmware nv-4.0.0+)
+  label?: string; // device label of that rule at the time of the request
+  counts?: { eog: number; emgLeft: number; emgRight: number; together: number };
   action: RequestAction;
   configVersion: number;
   status: CareRequestStatus;
@@ -58,6 +62,20 @@ const CareRequestSchema = new Schema<ICareRequest>(
     urgent: {
       type: Boolean,
       default: false,
+    },
+    alarm: {
+      type: Boolean,
+      default: false,
+    },
+    ruleId: {
+      type: String,
+      trim: true,
+    },
+    label: {
+      type: String,
+    },
+    counts: {
+      type: Schema.Types.Mixed,
     },
     action: {
       type: String,

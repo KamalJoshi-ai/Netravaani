@@ -132,7 +132,8 @@ export type RequestAction =
   | "YES"
   | "NO"
   | "CALL_NURSE"
-  | "WATER";
+  | "WATER"
+  | "REQUEST";
 
 export interface PredefinedCommandItem {
   action: RequestAction;
@@ -191,6 +192,11 @@ export interface CareRequestItem {
   gestureId: string;
   gesture?: string;
   urgent?: boolean;
+  alarm?: boolean;
+  ruleId?: string;
+  label?: string;
+  displayLabel?: string;
+  counts?: { eog: number; emgLeft: number; emgRight: number; together: number };
   action: RequestAction;
   configVersion: number;
   status: CareRequestStatus;
@@ -199,6 +205,49 @@ export interface CareRequestItem {
   resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+/** A command rule as the editor sends and receives it (device rule + dashboard name). */
+export interface CommandRuleItem {
+  id: string;
+  label: string;
+  displayLabel?: string;
+  eog: [number, number];
+  emgLeft: [number, number];
+  emgRight: [number, number];
+  simultaneous?: boolean;
+  urgent?: boolean;
+  alarm?: boolean;
+}
+
+export type RuleVersionStatus = "PENDING" | "APPLIED" | "FAILED";
+
+export interface RuleVersionItem {
+  version: number;
+  status: RuleVersionStatus;
+  error: string | null;
+  appliedAt: string | null;
+  createdAt: string;
+  createdBy: string | null;
+  ruleCount: number;
+  kind: "rules" | "legacy";
+}
+
+export interface DeviceRulesResponse {
+  deviceId: string;
+  rules: CommandRuleItem[];
+  latestVersion: RuleVersionItem | null;
+  versions: RuleVersionItem[];
+  appliedConfigVersion: number | null;
+  desiredConfigVersion: number | null;
+  lastSeenAt: string | null;
+}
+
+/** Body of a 422 from PUT /rules. */
+export interface RuleFieldError {
+  rule: number | null;
+  field: string;
+  message: string;
 }
 
 export class ApiError extends Error {
@@ -375,6 +424,26 @@ class ApiClient {
   // Configurations
   async getDeviceConfigs(deviceId: string): Promise<ApiResponse<DeviceConfigItem[]>> {
     return this.request<ApiResponse<DeviceConfigItem[]>>(`/devices/${deviceId}/configs`);
+  }
+
+  // Command rules (firmware nv-4.0.0)
+  async getCommandRules(deviceId: string): Promise<ApiResponse<DeviceRulesResponse>> {
+    return this.request<ApiResponse<DeviceRulesResponse>>(`/devices/${deviceId}/rules`);
+  }
+
+  async saveCommandRules(deviceId: string, rules: CommandRuleItem[]): Promise<ApiResponse<RuleVersionItem>> {
+    return this.request<ApiResponse<RuleVersionItem>>(`/devices/${deviceId}/rules`, {
+      method: "PUT",
+      body: JSON.stringify({ rules }),
+    });
+  }
+
+  async resetCommandRules(deviceId: string): Promise<ApiResponse<RuleVersionItem>> {
+    return this.request<ApiResponse<RuleVersionItem>>(`/devices/${deviceId}/rules/reset`, { method: "POST" });
+  }
+
+  async revertCommandRules(deviceId: string, version: number): Promise<ApiResponse<RuleVersionItem>> {
+    return this.request<ApiResponse<RuleVersionItem>>(`/devices/${deviceId}/rules/revert/${version}`, { method: "POST" });
   }
 
   async getLatestDeviceConfig(deviceId: string): Promise<ApiResponse<DeviceConfigItem | null>> {

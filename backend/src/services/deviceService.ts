@@ -4,6 +4,8 @@ import { Device, IDevice, DeviceStatus, DeviceConnectivityStatus } from "../mode
 import { DeviceAssignment, IDeviceAssignment } from "../models/DeviceAssignment.js";
 import { Patient } from "../models/Patient.js";
 import { AppError } from "../middleware/errorHandler.js";
+import { runInTransaction } from "../lib/transaction.js";
+import { commandRuleService } from "./commandRuleService.js";
 
 const generateDeviceId = customAlphabet("0123456789abcdef", 8);
 
@@ -67,19 +69,23 @@ export class DeviceService {
 
     const deviceId = `npg-${generateDeviceId()}`;
 
-    const device = await Device.create({
-      deviceId,
-      name: data.name,
-      hardwareId: data.hardwareId || undefined,
-      hardwareIdVerified: Boolean(data.hardwareIdVerified),
-      firmwareVersion: data.firmwareVersion || undefined,
-      isDevRegistration: data.isDevRegistration,
-      registeredBy: data.registeredBy || undefined,
-      status: "AVAILABLE",
-      connectivityStatus: "NEVER_SEEN",
+    // The device, its six default command rules and config version 1 are created together.
+    return runInTransaction(async (session) => {
+      const device = new Device({
+        deviceId,
+        name: data.name,
+        hardwareId: data.hardwareId || undefined,
+        hardwareIdVerified: Boolean(data.hardwareIdVerified),
+        firmwareVersion: data.firmwareVersion || undefined,
+        isDevRegistration: data.isDevRegistration,
+        registeredBy: data.registeredBy || undefined,
+        status: "AVAILABLE",
+        connectivityStatus: "NEVER_SEEN",
+      });
+      await device.save({ session });
+      await commandRuleService.seedDefaults(device, session, data.registeredBy || "system");
+      return device;
     });
-
-    return device;
   }
 
   async registerEsp32Device(data: RegisterEsp32DeviceDto): Promise<{
@@ -120,18 +126,24 @@ export class DeviceService {
       `ESP32-${normalizedHardwareId.replace(/[^a-zA-Z0-9]/g, "").slice(-6) || "Unit"}`;
     const token = crypto.randomBytes(24).toString("hex");
 
-    const device = await Device.create({
-      deviceId,
-      name,
-      hardwareId: normalizedHardwareId,
-      token,
-      hardwareIdVerified: true, // Physical device registration verified
-      firmwareVersion: data.firmwareVersion || undefined,
-      isDevRegistration: false,
-      registrationSource: "ESP32_WIFI",
-      registeredBy: data.registeredBy || undefined,
-      status: "AVAILABLE",
-      connectivityStatus: "NEVER_SEEN", // Remains NEVER_SEEN until authoritative heartbeat
+    // The device, its six default command rules and config version 1 are created together.
+    const device = await runInTransaction(async (session) => {
+      const created = new Device({
+        deviceId,
+        name,
+        hardwareId: normalizedHardwareId,
+        token,
+        hardwareIdVerified: true, // Physical device registration verified
+        firmwareVersion: data.firmwareVersion || undefined,
+        isDevRegistration: false,
+        registrationSource: "ESP32_WIFI",
+        registeredBy: data.registeredBy || undefined,
+        status: "AVAILABLE",
+        connectivityStatus: "NEVER_SEEN", // Remains NEVER_SEEN until authoritative heartbeat
+      });
+      await created.save({ session });
+      await commandRuleService.seedDefaults(created, session, data.registeredBy || "system");
+      return created;
     });
 
     return { device, isNew: true };

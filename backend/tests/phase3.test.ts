@@ -67,7 +67,8 @@ describe("Phase 3: Gesture Configuration & Patient Instructions", () => {
 
     expect(res.status).toBe(201);
     expect(res.body.status).toBe("success");
-    expect(res.body.data).toHaveProperty("version", 1);
+    // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+    expect(res.body.data).toHaveProperty("version", 2);
     expect(res.body.data.status).toBe("PENDING");
     expect(res.body.data.appliedAt).toBeUndefined();
     expect(res.body.data.mappings).toHaveLength(2);
@@ -95,7 +96,8 @@ describe("Phase 3: Gesture Configuration & Patient Instructions", () => {
       });
 
     expect(res2.status).toBe(201);
-    expect(res2.body.data.version).toBe(2);
+    // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+    expect(res2.body.data.version).toBe(3);
     expect(res2.body.data.status).toBe("PENDING");
   });
 
@@ -121,9 +123,10 @@ describe("Phase 3: Gesture Configuration & Patient Instructions", () => {
     // Retrieve history
     const historyRes = await request(app).get(`/api/devices/${deviceId}/configs`);
     expect(historyRes.status).toBe(200);
-    expect(historyRes.body.data).toHaveLength(2);
+    // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+    expect(historyRes.body.data).toHaveLength(3);
 
-    const v1History = historyRes.body.data.find((c: { version: number }) => c.version === 1);
+    const v1History = historyRes.body.data.find((c: { version: number }) => c.version === 2);
     expect(v1History.mappings[0].gestureId).toBe("BLINK_SINGLE");
     expect(v1History.status).toBe("PENDING");
   });
@@ -147,7 +150,8 @@ describe("Phase 3: Gesture Configuration & Patient Instructions", () => {
 
     const latestRes = await request(app).get(`/api/devices/${deviceId}/configs/latest`);
     expect(latestRes.status).toBe(200);
-    expect(latestRes.body.data.version).toBe(2);
+    // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+    expect(latestRes.body.data.version).toBe(3);
     expect(latestRes.body.data.mappings[0].action).toBe("EMERGENCY");
   });
 

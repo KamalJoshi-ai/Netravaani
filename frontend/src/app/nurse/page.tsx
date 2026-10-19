@@ -1,7 +1,6 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   apiClient,
@@ -18,10 +17,8 @@ import {
   Bed,
   CheckCircle2,
   AlertTriangle,
-  Clock,
   Check,
   Search,
-  ChevronDown,
   ArrowRight,
   ArrowUpRight,
   Shield,
@@ -29,15 +26,14 @@ import {
   Bluetooth,
   RefreshCw,
   LogOut,
-  Wrench,
   User,
-  UserPlus,
   X,
-  FileText,
+  SlidersHorizontal,
 } from "@/lib/noIcons";
 import { useAuth } from "@/lib/auth";
 import LoginForm from "@/components/LoginForm";
 import BleCommissioningModal from "@/components/BleCommissioningModal";
+import CommandRuleEditor from "@/components/commands/CommandRuleEditor";
 
 interface StepConfirmData {
   request: CareRequestItem;
@@ -93,14 +89,15 @@ export default function NurseDashboardPage() {
   const [requests, setRequests] = useState<CareRequestItem[]>([]);
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [patients, setPatients] = useState<PatientItem[]>([]);
-  const [commandsList, setCommandsList] = useState<PredefinedCommandItem[]>([]);
-  const [loading, setLoading] = useState(true);
+  const [, setCommandsList] = useState<PredefinedCommandItem[]>([]);
+  const [, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "calls" | "patients" | "devices" | "history">("overview");
   const [filter, setFilter] = useState<"ALL" | CareRequestStatus>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [isBleModalOpen, setIsBleModalOpen] = useState(false);
   const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<DeviceItem | null>(null);
+  const [deviceDetailsTab, setDeviceDetailsTab] = useState<"overview" | "commands">("overview");
 
   // In-place confirmation dialog state (does NOT jump to top of page)
   const [stepConfirm, setStepConfirm] = useState<StepConfirmData | null>(null);
@@ -319,10 +316,6 @@ export default function NurseDashboardPage() {
   };
 
   // Metrics computation (100% REAL from database, zero preserved fake values)
-  const openRequests = useMemo(() => {
-    return requests.filter((r) => r.status !== "RESOLVED");
-  }, [requests]);
-
   const urgentCallsCount = useMemo(() => {
     return requests.filter(
       (r) =>
@@ -337,10 +330,6 @@ export default function NurseDashboardPage() {
 
   const inProgressCount = useMemo(() => {
     return requests.filter((r) => r.status === "IN_PROGRESS").length;
-  }, [requests]);
-
-  const acknowledgedCount = useMemo(() => {
-    return requests.filter((r) => r.status === "ACKNOWLEDGED").length;
   }, [requests]);
 
   const resolvedTodayCount = useMemo(() => {
@@ -368,9 +357,17 @@ export default function NurseDashboardPage() {
       const pBed = req.patient?.bedLabel?.toLowerCase() || "";
       const pCode = req.patient?.patientCode?.toLowerCase() || "";
       const pAction = req.action?.toLowerCase() || "";
-      return pName.includes(q) || pBed.includes(q) || pCode.includes(q) || pAction.includes(q);
+      const pLabel = `${req.displayLabel || ""} ${req.label || ""}`.toLowerCase();
+      return pName.includes(q) || pBed.includes(q) || pCode.includes(q) || pAction.includes(q) || pLabel.includes(q);
+    }).sort((a, b) => {
+      const openAlarm = (r: CareRequestItem) => Boolean(r.alarm) && r.status !== "RESOLVED";
+      return openAlarm(a) === openAlarm(b) ? 0 : openAlarm(a) ? -1 : 1;
     });
   }, [requests, filter, searchQuery]);
+
+  // Request name for the nurse: the rule's dashboard name, else its device label, else the legacy action
+  const requestLabel = (req: CareRequestItem) =>
+    req.displayLabel || req.label || req.action.replace(/_/g, " ");
 
   // Format relative elapsed time
   const formatElapsedTime = (dateString?: string) => {
@@ -521,7 +518,7 @@ export default function NurseDashboardPage() {
                 <button
                   key={tab.id}
                   type="button"
-                  onClick={() => setActiveTab(tab.id as any)}
+                  onClick={() => setActiveTab(tab.id as typeof activeTab)}
                   className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
                     isActive
                       ? "bg-[#EFE7DC] text-[#211C19] shadow-xs"
@@ -762,7 +759,7 @@ export default function NurseDashboardPage() {
                               Call resolved · {req.patient?.bedLabel || "Bedside"}
                             </div>
                             <div className="text-xs text-[#76685F]">
-                              {req.patient?.displayName || "Patient"} ({req.action.replace("_", " ")}) — handled by station
+                              {req.patient?.displayName || "Patient"} ({requestLabel(req)}) — handled by station
                             </div>
                           </div>
                         </div>
@@ -857,7 +854,7 @@ export default function NurseDashboardPage() {
                     </thead>
                     <tbody className="divide-y divide-[#E5D9CA]/70">
                       {filteredRequests.map((req) => {
-                        const isEmergency = req.action === "EMERGENCY" || Boolean(req.urgent);
+                        const isEmergency = req.action === "EMERGENCY" || Boolean(req.urgent) || Boolean(req.alarm);
                         return (
                           <tr
                             key={req._id}
@@ -880,7 +877,12 @@ export default function NurseDashboardPage() {
                                 >
                                   {req.status}
                                 </span>
-                                {isEmergency && (
+                                {req.alarm && req.status !== "RESOLVED" ? (
+                                  <span className="text-[10px] font-black uppercase tracking-wider text-white bg-[#B42318] rounded-full px-2 py-0.5 flex items-center gap-1 animate-pulse">
+                                    <AlertTriangle className="w-3 h-3" />
+                                    Alarm
+                                  </span>
+                                ) : isEmergency && (
                                   <span className="text-[10px] font-bold text-[#B42318] flex items-center gap-1">
                                     <AlertTriangle className="w-3 h-3" />
                                     Urgent
@@ -898,10 +900,12 @@ export default function NurseDashboardPage() {
                             </td>
                             <td className="py-3.5 px-4">
                               <div className="font-semibold text-[#211C19]">
-                                {req.action.replace("_", " ")}
+                                {requestLabel(req)}
                               </div>
                               <div className="text-[11px] text-[#76685F] font-mono">
-                                ESP32 Telemetry Trigger
+                                {req.counts
+                                  ? `${req.counts.eog} blinks · L${req.counts.emgLeft} · R${req.counts.emgRight}${req.counts.together ? ` · ${req.counts.together} together` : ""}`
+                                  : "ESP32 Telemetry Trigger"}
                               </div>
                             </td>
                             <td className="py-3.5 px-4 whitespace-nowrap font-mono text-[11px] text-[#76685F]">
@@ -1364,14 +1368,30 @@ export default function NurseDashboardPage() {
                         </div>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => setSelectedDeviceDetails(d)}
-                        className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
-                      >
-                        <span>View device details</span>
-                        <ArrowUpRight className="w-3.5 h-3.5" />
-                      </button>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeviceDetailsTab("overview");
+                            setSelectedDeviceDetails(d);
+                          }}
+                          className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                        >
+                          <span>View device details</span>
+                          <ArrowUpRight className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeviceDetailsTab("commands");
+                            setSelectedDeviceDetails(d);
+                          }}
+                          className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#AD5D3D] hover:text-[#964F33] border border-[#E2C7B8] bg-[#FAF0E6]/60 hover:bg-[#F5ECE6] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                        >
+                          <SlidersHorizontal className="w-3.5 h-3.5" />
+                          <span>Commands</span>
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1410,7 +1430,7 @@ export default function NurseDashboardPage() {
                       </div>
                       <div>
                         <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                          Resolved: {req.action.replace("_", " ")} · {req.patient?.bedLabel || "Bedside"}
+                          Resolved: {requestLabel(req)} · {req.patient?.bedLabel || "Bedside"}
                         </div>
                         <div className="text-xs text-[#76685F] mt-0.5">
                           Patient {req.patient?.displayName || "Patient"} ({req.patient?.patientCode || "N/A"}) · Handled by nursing station
@@ -1495,20 +1515,49 @@ export default function NurseDashboardPage() {
           aria-modal="true"
           className="fixed inset-0 z-50 bg-[#211C19]/40 backdrop-blur-xs flex items-center justify-center p-4"
         >
-          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover">
+          <div
+            className={`bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 w-full shadow-hover max-h-[92vh] overflow-y-auto transition-[max-width] duration-300 ${
+              deviceDetailsTab === "commands" ? "max-w-6xl" : "max-w-md"
+            }`}
+          >
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-heading font-bold text-base text-[#211C19]">
-                Device Telemetry Details
+                {deviceDetailsTab === "commands" ? `${selectedDeviceDetails.name} · Commands` : "Device Telemetry Details"}
               </h3>
               <button
                 type="button"
-                onClick={() => setSelectedDeviceDetails(null)}
+                aria-label="Close device details"
+                onClick={() => {
+                  setSelectedDeviceDetails(null);
+                  setDeviceDetailsTab("overview");
+                }}
                 className="text-[#76685F] hover:text-[#211C19] p-1"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
+            <div role="tablist" aria-label="Device details" className="mb-4 inline-flex rounded-xl bg-[#F0EAE1] p-1 text-xs font-bold">
+              {(["overview", "commands"] as const).map((t) => (
+                <button
+                  key={t}
+                  type="button"
+                  role="tab"
+                  aria-selected={deviceDetailsTab === t}
+                  onClick={() => setDeviceDetailsTab(t)}
+                  className={`rounded-lg px-3.5 py-1.5 transition ${
+                    deviceDetailsTab === t ? "bg-[#FFFCF7] text-[#AD5D3D] shadow-subtle" : "text-[#76685F] hover:text-[#211C19]"
+                  }`}
+                >
+                  {t === "overview" ? "Overview" : "Commands"}
+                </button>
+              ))}
+            </div>
+
+            {deviceDetailsTab === "commands" ? (
+              <CommandRuleEditor deviceId={selectedDeviceDetails.deviceId} />
+            ) : (
+            <>
             <div className="space-y-2.5 text-xs">
               <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
                 <span className="text-[#76685F]">Device Name</span>
@@ -1543,6 +1592,8 @@ export default function NurseDashboardPage() {
                 Done
               </button>
             </div>
+            </>
+            )}
           </div>
         </div>
       )}

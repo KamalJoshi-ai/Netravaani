@@ -166,13 +166,14 @@ describe("Device Connectivity Phase: Telemetry, Constraints & Delivery Foundatio
       });
 
       expect(configRes.status).toBe(201);
-      expect(configRes.body.data.version).toBe(1);
+      // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+      expect(configRes.body.data.version).toBe(2);
       expect(configRes.body.data.status).toBe("PENDING");
       expect(configRes.body.data.appliedAt).toBeUndefined();
 
       // Check device desired vs applied version
       const devRes = await request(app).get(`/api/devices/${deviceId}`);
-      expect(devRes.body.data.desiredConfigVersion).toBe(1);
+      expect(devRes.body.data.desiredConfigVersion).toBe(2);
       expect(devRes.body.data.appliedConfigVersion).toBeUndefined();
     });
 
@@ -343,14 +344,15 @@ describe("Device Connectivity Phase: Telemetry, Constraints & Delivery Foundatio
       await request(app).post(`/api/devices/${deviceId}/configs`).send({
         mappings: [{ gestureId: "BLINK_DOUBLE", gestureName: "Double Blink", action: "NEED_WATER" }],
       });
-      await request(app).post(`/api/devices/${deviceId}/configs/1/ack`).send({ status: "APPLIED" });
+      // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+      await request(app).post(`/api/devices/${deviceId}/configs/2/ack`).send({ status: "APPLIED" });
 
       // Ingest care request
       const eventRes = await request(app).post("/api/device-events").send({
         eventId: "event-offline-safety-1",
         deviceId,
         gestureId: "BLINK_DOUBLE",
-        configVersion: 1,
+        configVersion: 2,
       });
       expect(eventRes.status).toBe(201);
       const requestId = eventRes.body.data._id;

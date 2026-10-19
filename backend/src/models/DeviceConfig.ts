@@ -18,6 +18,7 @@ export const RequestActionEnum = [
   "CANT_BREATHE_NEED_SUCTION",
   "REQUEST_HELP",
   "REQUEST_WATER",
+  "REQUEST",
 ] as const;
 export type RequestAction = (typeof RequestActionEnum)[number];
 
@@ -28,13 +29,35 @@ export interface IGestureMapping {
   instruction?: string;    // e.g. "Blink once deliberately to request water"
 }
 
+/** Full rule as saved, including the dashboard-only display name. Used for revert. */
+export interface IRuleSnapshot {
+  id: string;
+  label: string;
+  displayLabel?: string;
+  eog: [number, number];
+  emgLeft: [number, number];
+  emgRight: [number, number];
+  simultaneous?: boolean;
+  urgent?: boolean;
+  alarm?: boolean;
+}
+
+/**
+ * One immutable configuration version for a device (the DeviceConfigVersion of
+ * the rules spec). Legacy gesture-mapping versions keep using `mappings`;
+ * command-rule versions (firmware nv-4.0.0+) carry `payload`, which is exactly
+ * what GET /api/devices/:id/config returns.
+ */
 export interface IDeviceConfig extends Document {
   device: Types.ObjectId;
   version: number;
   mappings: IGestureMapping[];
+  payload?: { version: number; rules: unknown[] };
+  ruleSnapshot?: IRuleSnapshot[];
+  createdBy?: string;
   status: ConfigStatus;
   appliedAt?: Date;
-  failureReason?: string;
+  failureReason?: string; // the device's reason when FAILED (exposed as `error`)
   createdAt: Date;
   updatedAt: Date;
 }
@@ -80,7 +103,17 @@ const DeviceConfigSchema = new Schema<IDeviceConfig>(
     mappings: {
       type: [GestureMappingSchema],
       default: [],
-      required: true,
+    },
+    payload: {
+      type: Schema.Types.Mixed,
+    },
+    ruleSnapshot: {
+      type: [Schema.Types.Mixed],
+      default: undefined,
+    },
+    createdBy: {
+      type: String,
+      trim: true,
     },
     status: {
       type: String,

@@ -14,8 +14,10 @@ import {
   Battery,
   Cpu,
   Info,
+  SlidersHorizontal,
 } from "@/lib/noIcons";
 import { apiClient, DeviceItem } from "@/lib/api";
+import CommandRuleEditor from "@/components/commands/CommandRuleEditor";
 
 // Exact UUIDs from NetraVaani-Device-Kit-v1.1.1
 export const NV_SERVICE_UUID = "a7c10001-5e4b-4d2a-9c1e-3f6e7a2b9d01";
@@ -55,7 +57,8 @@ type CommissioningStep =
   | "IDENTITY_READ" // 2. Read Identity & Backend Register
   | "WIFI_PROVISION" // 3. Enter Wi-Fi & Provision
   | "VERIFYING_HEARTBEAT" // 4. Waiting for authoritative heartbeat
-  | "COMMISSIONED"; // 5. Verified ONLINE
+  | "COMMISSIONED" // 5. Verified ONLINE
+  | "COMMANDS"; // 6. Review the default command rules
 
 export default function BleCommissioningModal({
   isOpen,
@@ -450,7 +453,11 @@ export default function BleCommissioningModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-[#211C19]/60 backdrop-blur-sm flex items-center justify-center p-4 selection:bg-[#AD5D3D]/20">
-      <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl max-w-2xl w-full p-5 sm:p-6 space-y-5 shadow-card overflow-hidden max-h-[92vh] flex flex-col text-[#211C19]">
+      <div
+        className={`bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl w-full p-5 sm:p-6 space-y-5 shadow-card overflow-hidden max-h-[92vh] flex flex-col text-[#211C19] transition-[max-width] duration-300 ${
+          step === "COMMANDS" ? "max-w-6xl" : "max-w-2xl"
+        }`}
+      >
         {/* Modal Header */}
         <div className="flex items-center justify-between pb-3.5 border-b border-[#E5D9CA]">
           <div className="flex items-center gap-3">
@@ -508,6 +515,14 @@ export default function BleCommissioningModal({
             }`}
           >
             <CheckCircle2 className="w-3.5 h-3.5" /> 4. Verify
+          </span>
+          <ArrowRight className="w-3 h-3 text-[#9E9086] shrink-0" />
+          <span
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg shrink-0 ${
+              step === "COMMANDS" ? "bg-[#FFFCF7] border border-[#E5D9CA] text-[#AD5D3D] font-bold shadow-subtle" : ""
+            }`}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" /> 5. Commands
           </span>
         </div>
 
@@ -902,21 +917,35 @@ export default function BleCommissioningModal({
               </div>
             </div>
 
-            <div className="pt-2 flex justify-end">
+            <div className="pt-2 flex flex-wrap justify-end gap-2">
               <button
                 type="button"
                 onClick={handleFinish}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold border border-[#E5D9CA] text-[#76685F] hover:text-[#211C19] transition min-h-[40px]"
+              >
+                Skip &amp; finish
+              </button>
+              <button
+                type="button"
+                onClick={() => setStep("COMMANDS")}
                 className="px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider bg-[#AD5D3D] hover:bg-[#964F33] text-[#FFFCF7] shadow-subtle transition flex items-center gap-1.5 min-h-[40px]"
               >
-                <span>Finish &amp; View in Registry</span>
+                <span>Next: Commands</span>
                 <ArrowRight className="w-3.5 h-3.5 stroke-[3]" />
               </button>
             </div>
           </div>
         )}
 
+        {/* STEP 5: COMMANDS (pre-filled with the six defaults saved at registration) */}
+        {step === "COMMANDS" && verifiedDevice && (
+          <div className="overflow-y-auto pr-1 -mr-1 nv-pop-in">
+            <CommandRuleEditor deviceId={verifiedDevice.deviceId} variant="setup" onDone={handleFinish} />
+          </div>
+        )}
+
         {/* Eye Calibration */}
-        {provisionCharRef.current && (
+        {provisionCharRef.current && step !== "COMMANDS" && (
           <div className="pt-2 border-t border-[#E5D9CA] space-y-1.5">
             <div className="flex items-center justify-between text-xs">
               <span className="font-bold text-[#211C19]">Eye Calibration (Per-Patient)</span>
@@ -956,7 +985,7 @@ export default function BleCommissioningModal({
         )}
 
         {/* Live Device Log & Gesture Counters */}
-        <div className="pt-2 border-t border-[#E5D9CA] space-y-2">
+        <div className={`pt-2 border-t border-[#E5D9CA] space-y-2 ${step === "COMMANDS" ? "hidden" : ""}`}>
           <div className="flex items-center justify-between text-xs">
             <span className="font-bold text-[#211C19] flex items-center gap-1.5">
               <Terminal className="w-3.5 h-3.5 text-[#AD5D3D]" />

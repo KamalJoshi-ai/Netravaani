@@ -5,3 +5,4 @@ export * from "./DeviceConfig.js";
 export * from "./CareRequest.js";
 export * from "./User.js";
 export * from "./Nurse.js";
+export * from "./CommandRule.js";

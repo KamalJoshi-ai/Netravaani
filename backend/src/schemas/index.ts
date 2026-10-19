@@ -164,6 +164,38 @@ export const deviceEventSchema = z.object({
   occurredAt: z.union([z.string(), z.number()]).optional(),
   appliedVersion: z.coerce.number().int().optional(),
   timestamp: z.union([z.string(), z.number()]).optional(),
+  // Firmware nv-4.0.0 command rules
+  ruleId: z.string().trim().max(24).optional(),
+  label: z.string().max(40).optional(),
+  alarm: z.boolean().optional(),
+  counts: z
+    .object({
+      eog: z.coerce.number().int().min(0).default(0),
+      emgLeft: z.coerce.number().int().min(0).default(0),
+      emgRight: z.coerce.number().int().min(0).default(0),
+      together: z.coerce.number().int().min(0).default(0),
+    })
+    .optional(),
+  rejectedVersion: z.coerce.number().int().optional(),
+  error: z.string().max(200).optional(),
+});
+
+// Command rule editor (PUT /api/devices/:id/rules). Only the shape is checked
+// here; the shared firmware validator decides what is allowed and returns 422.
+const countRange = z.tuple([z.number(), z.number()]);
+export const commandRuleSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  displayLabel: z.string().max(80).optional().nullable().transform((v) => v ?? undefined),
+  eog: countRange,
+  emgLeft: countRange,
+  emgRight: countRange,
+  simultaneous: z.boolean().optional(),
+  urgent: z.boolean().optional(),
+  alarm: z.boolean().optional(),
+});
+export const saveCommandRulesSchema = z.object({
+  rules: z.array(commandRuleSchema).max(50),
 });
 
 export const listCareRequestsQuerySchema = z.object({

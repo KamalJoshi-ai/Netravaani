@@ -8,16 +8,13 @@ import {
   X,
   AlertTriangle,
   CheckCircle2,
-  Cpu,
   ArrowLeft,
   Bell,
   Bed,
   Shield,
-  Radio,
   LogOut,
   RefreshCw,
   Clock,
-  Activity,
 } from "@/lib/noIcons";
 
 interface PatientBedsideViewProps {

@@ -1,10 +1,12 @@
 import { Types } from "mongoose";
 import { Device } from "../models/Device.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
-import { DeviceConfig } from "../models/DeviceConfig.js";
+import { DeviceConfig, RequestActionEnum } from "../models/DeviceConfig.js";
 import { CareRequest, ICareRequest, CareRequestStatus } from "../models/CareRequest.js";
 import { Patient } from "../models/Patient.js";
 import { AppError } from "../middleware/errorHandler.js";
+import { commandRuleService } from "./commandRuleService.js";
+import { CommandRule } from "../models/CommandRule.js";
 
 export interface IngestDeviceEventDto {
   eventId: string;
@@ -18,7 +20,24 @@ export interface IngestDeviceEventDto {
   occurredAt?: string | number;
   appliedVersion?: number;
   timestamp?: string | number;
+  // Firmware nv-4.0.0 command rules
+  ruleId?: string;
+  label?: string;
+  alarm?: boolean;
+  counts?: { eog: number; emgLeft: number; emgRight: number; together: number };
+  rejectedVersion?: number;
+  error?: string;
 }
+
+/** Legacy action for the default rule ids, so older dashboard views keep working. */
+const RULE_ACTION: Record<string, string> = {
+  yes: "YES",
+  no: "NO",
+  water: "WATER",
+  call_nurse: "CALL_NURSE",
+  adjustment: "REPOSITION",
+  emergency: "EMERGENCY",
+};
 
 export interface ListCareRequestsQuery {
   page?: number;
@@ -62,6 +81,7 @@ export class CareRequestService {
    */
   async ingestDeviceEvent(dto: IngestDeviceEventDto): Promise<{ isDuplicate: boolean; careRequest?: ICareRequest; accepted?: boolean }> {
     const { eventId, deviceId, eventType, gestureId, gesture, action, urgent, configVersion, appliedVersion } = dto;
+    const { ruleId, label, alarm, counts, rejectedVersion, error } = dto;
 
     // Deduplication check: return existing if eventId was already processed
     const existing = await CareRequest.findOne({ eventId })
@@ -91,9 +111,52 @@ export class CareRequestService {
     if (eventType === "CONFIG_APPLIED" && appliedVersion) {
       device.appliedConfigVersion = appliedVersion;
       await device.save();
+      await commandRuleService.markApplied(device, appliedVersion);
+      return { isDuplicate: false, accepted: true };
+    }
+    if (eventType === "CONFIG_FAILED") {
+      // The device keeps running appliedVersion; only rejectedVersion is marked FAILED.
+      if (appliedVersion && appliedVersion >= 1) device.appliedConfigVersion = appliedVersion;
+      await device.save();
+      if (rejectedVersion && rejectedVersion >= 1) {
+        await commandRuleService.markFailed(device, rejectedVersion, error);
+      }
       return { isDuplicate: false, accepted: true };
     }
     await device.save();
+
+    // Firmware nv-4.0.0: the request names the command rule that fired.
+    if (ruleId && (!eventType || eventType === "PATIENT_REQUEST")) {
+      const assignment = await DeviceAssignment.findOne({ device: device._id, isActive: true });
+      const deviceLabel = (label || "").trim() || ruleId;
+      const legacyAction =
+        RULE_ACTION[ruleId] ||
+        (action && (RequestActionEnum as readonly string[]).includes(action.toUpperCase()) ? action.toUpperCase() : "REQUEST");
+      const isAlarm = Boolean(alarm);
+
+      const careRequest = await CareRequest.create({
+        eventId,
+        device: device._id,
+        patient: assignment?.patient || undefined,
+        gestureId: ruleId,
+        gesture: deviceLabel,
+        ruleId,
+        label: deviceLabel,
+        counts: counts || undefined,
+        // An alarm is always urgent, so acknowledging it also silences the board.
+        urgent: Boolean(urgent) || isAlarm,
+        alarm: isAlarm,
+        action: legacyAction,
+        configVersion: configVersion || device.appliedConfigVersion || 1,
+        status: "NEW",
+      });
+
+      const populated = await CareRequest.findById(careRequest._id)
+        .populate("device", "deviceId name status")
+        .populate("patient", "patientCode displayName bedLabel status");
+
+      return { isDuplicate: false, careRequest: populated || careRequest };
+    }
 
     // If event is not a PATIENT_REQUEST and has no gesture/action, acknowledge it
     if (eventType && eventType !== "PATIENT_REQUEST" && !action && !gestureId && !gesture) {
@@ -280,12 +343,36 @@ export class CareRequestService {
       CareRequest.countDocuments(filter),
     ]);
 
-    // Prioritize NEW requests first, followed by most recent
-    const items = [...rawItems].sort((a, b) => {
-      if (a.status === "NEW" && b.status !== "NEW") return -1;
-      if (a.status !== "NEW" && b.status === "NEW") return 1;
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
+    // Dashboard display names for rule-based requests (never shown: the raw rule id)
+    const ruleKeys = [...new Set(rawItems.map((r) => r.ruleId).filter(Boolean) as string[])];
+    const displayNames = new Map<string, string>();
+    if (ruleKeys.length > 0) {
+      const deviceIds = rawItems.map((r) => ((r.device as any)?._id || r.device) as Types.ObjectId);
+      const rules = await CommandRule.find({ device: { $in: deviceIds }, ruleKey: { $in: ruleKeys } })
+        .select("device ruleKey displayLabel")
+        .lean();
+      for (const rule of rules) {
+        if (rule.displayLabel) displayNames.set(`${rule.device}:${rule.ruleKey}`, rule.displayLabel);
+      }
+    }
+
+    // Open alarms first, then NEW requests, then most recent
+    const isOpenAlarm = (r: ICareRequest) => Boolean(r.alarm) && r.status !== "RESOLVED";
+    const items = [...rawItems]
+      .sort((a, b) => {
+        if (isOpenAlarm(a) !== isOpenAlarm(b)) return isOpenAlarm(a) ? -1 : 1;
+        if (a.status === "NEW" && b.status !== "NEW") return -1;
+        if (a.status !== "NEW" && b.status === "NEW") return 1;
+        return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+      })
+      .map((r) => {
+        const plain = r.toObject() as unknown as Record<string, unknown>;
+        if (r.ruleId) {
+          const devKey = String((r.device as any)?._id || r.device);
+          plain.displayLabel = displayNames.get(`${devKey}:${r.ruleId}`) || r.label || r.ruleId;
+        }
+        return plain;
+      });
 
     return {
       items,

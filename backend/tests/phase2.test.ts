@@ -328,7 +328,8 @@ describe("Phase 2: Device Registry, Patient Management & Assignment", () => {
         });
 
       expect(res.status).toBe(201);
-      expect(res.body.data.version).toBe(1);
+      // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+      expect(res.body.data.version).toBe(2);
       expect(res.body.data.status).toBe("PENDING");
       expect(res.body.data.mappings).toHaveLength(2);
     });
@@ -365,14 +366,15 @@ describe("Phase 2: Device Registry, Patient Management & Assignment", () => {
         });
 
       expect(res2.status).toBe(201);
-      expect(res2.body.data.version).toBe(2);
+      // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+      expect(res2.body.data.version).toBe(3);
 
-      // Verify list endpoint returns both versions in descending order
+      // Verify list endpoint returns all versions in descending order
       const listRes = await request(app).get(`/api/devices/${deviceId}/configs`);
       expect(listRes.status).toBe(200);
-      expect(listRes.body.data).toHaveLength(2);
-      expect(listRes.body.data[0].version).toBe(2);
-      expect(listRes.body.data[1].version).toBe(1);
+      expect(listRes.body.data).toHaveLength(3);
+      expect(listRes.body.data[0].version).toBe(3);
+      expect(listRes.body.data[1].version).toBe(2);
     });
 
     it("rejects invalid configuration payload (empty mappings)", async () => {

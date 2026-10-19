@@ -382,7 +382,8 @@ describe("ESP32 Wi-Fi Device Connection System", () => {
           eventId: "evt-offline-test-001",
           deviceId: devId,
           gestureId: "LOOK_UP",
-          configVersion: 1,
+          // Version 1 is the default command rules seeded at registration, so legacy configs start at 2.
+          configVersion: 2,
         });
       expect(eventRes.status).toBe(201);
       const reqId = eventRes.body.data._id;

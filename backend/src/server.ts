@@ -2,6 +2,7 @@ import { createApp } from "./app.js";
 import { env } from "./config/env.js";
 import { connectDatabase } from "./lib/db.js";
 import { startConnectivityWatchdog, stopConnectivityWatchdog } from "./services/deviceService.js";
+import { commandRuleService } from "./services/commandRuleService.js";
 
 // NetraVaani Clinical Backend Server - v2.1.0 with Patient Bedside Auth
 async function bootstrap() {
@@ -9,6 +10,11 @@ async function bootstrap() {
 
   try {
     await connectDatabase(env.MONGODB_URI);
+    // Migration 2026-10-19-command-rules: devices without command rules get the defaults.
+    commandRuleService
+      .backfillDefaults()
+      .then((n) => n > 0 && console.log(`[Migration] Seeded default command rules on ${n} device(s)`))
+      .catch((e) => console.error("[Migration] Command rule backfill failed:", e));
   } catch (err) {
     console.warn("[Server] Initial MongoDB connection failed. Will serve health checks with degraded readiness.");
   }
