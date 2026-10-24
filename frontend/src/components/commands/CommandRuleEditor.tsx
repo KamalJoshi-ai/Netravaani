@@ -5,6 +5,7 @@ import { apiClient, ApiError, CommandRuleItem, DeviceRulesResponse, RuleFieldErr
 import { InfoTip, RangeCell, StatusPill, Switch, useFlipList } from "./controls";
 import TryGesturePanel, { GestureInput } from "./TryGesturePanel";
 import VersionHistory from "./VersionHistory";
+import { SPEECH_PRESETS, buildSentence, speak, speechSupported, speechTemplateFor } from "@/lib/speech";
 import {
   CHANNELS,
   Channel,
@@ -422,6 +423,12 @@ export default function CommandRuleEditor({
         <span />
       </div>
 
+      <datalist id="nv-speech-presets">
+        {SPEECH_PRESETS.map((p) => (
+          <option key={p} value={p} />
+        ))}
+      </datalist>
+
       {/* Rows */}
       <div ref={listRef} className="relative pl-7 space-y-2.5">
         <svg aria-hidden className="pointer-events-none absolute left-0 top-0 h-full w-7 overflow-visible">
@@ -744,6 +751,39 @@ function RuleRow({
             aria-label={`Display name for the dashboard, row ${index + 1}`}
             className="h-8 w-full rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-3 text-xs text-[#211C19] placeholder-[#9E9086] focus:border-[#AD5D3D] focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/20"
           />
+          {/* Voice phrase: completes "Patient on bed X ...", dashboard only */}
+          <div className="flex items-center gap-1.5">
+            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#76685F]">Spoken as</span>
+            <input
+              value={rule.speechTemplate || ""}
+              onChange={(e) => onChange({ speechTemplate: e.target.value })}
+              maxLength={120}
+              list="nv-speech-presets"
+              placeholder={speechTemplateFor(rule.id, undefined)}
+              title='Completes "Patient on bed X ...". {command} is replaced with the command name.'
+              aria-label={`Spoken phrase for voice alerts, row ${index + 1}`}
+              className="h-8 min-w-0 flex-1 rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-2.5 text-xs text-[#211C19] placeholder-[#9E9086] focus:border-[#AD5D3D] focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/20"
+            />
+            {speechSupported() && (
+              <button
+                type="button"
+                onClick={() =>
+                  speak(
+                    buildSentence("4", speechTemplateFor(rule.id, rule.speechTemplate), rule.displayLabel?.trim() || rule.label),
+                    { interrupt: true }
+                  )
+                }
+                aria-label={`Preview how ${name} is announced`}
+                title={buildSentence("4", speechTemplateFor(rule.id, rule.speechTemplate), rule.displayLabel?.trim() || rule.label)}
+                className="h-8 w-8 shrink-0 grid place-items-center rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D]"
+              >
+                <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M11 5 6 9H3v6h3l5 4V5z" />
+                  <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                </svg>
+              </button>
+            )}
+          </div>
           <button
             type="button"
             aria-expanded={advancedOpen}
