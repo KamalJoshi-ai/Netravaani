@@ -7,6 +7,7 @@ import { Patient } from "../models/Patient.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { commandRuleService } from "./commandRuleService.js";
 import { CommandRule } from "../models/CommandRule.js";
+import { speechTemplateFor } from "../shared/speechDefaults.js";
 
 export interface IngestDeviceEventDto {
   eventId: string;
@@ -346,13 +347,15 @@ export class CareRequestService {
     // Dashboard display names for rule-based requests (never shown: the raw rule id)
     const ruleKeys = [...new Set(rawItems.map((r) => r.ruleId).filter(Boolean) as string[])];
     const displayNames = new Map<string, string>();
+    const speechTemplates = new Map<string, string>();
     if (ruleKeys.length > 0) {
       const deviceIds = rawItems.map((r) => ((r.device as any)?._id || r.device) as Types.ObjectId);
       const rules = await CommandRule.find({ device: { $in: deviceIds }, ruleKey: { $in: ruleKeys } })
-        .select("device ruleKey displayLabel")
+        .select("device ruleKey displayLabel speechTemplate")
         .lean();
       for (const rule of rules) {
         if (rule.displayLabel) displayNames.set(`${rule.device}:${rule.ruleKey}`, rule.displayLabel);
+        if (rule.speechTemplate) speechTemplates.set(`${rule.device}:${rule.ruleKey}`, rule.speechTemplate);
       }
     }
 
@@ -370,6 +373,7 @@ export class CareRequestService {
         if (r.ruleId) {
           const devKey = String((r.device as any)?._id || r.device);
           plain.displayLabel = displayNames.get(`${devKey}:${r.ruleId}`) || r.label || r.ruleId;
+          plain.speechTemplate = speechTemplateFor(r.ruleId, speechTemplates.get(`${devKey}:${r.ruleId}`));
         }
         return plain;
       });

@@ -38,6 +38,7 @@ import { useAuth } from "@/lib/auth";
 import LoginForm from "@/components/LoginForm";
 import BleCommissioningModal from "@/components/BleCommissioningModal";
 import CommandRuleEditor from "@/components/commands/CommandRuleEditor";
+import { announcementFor, speak, useVoiceAlerts } from "@/lib/speech";
 
 interface StepConfirmData {
   request: CareRequestItem;
@@ -102,6 +103,7 @@ export default function NurseDashboardPage() {
   const [isBleModalOpen, setIsBleModalOpen] = useState(false);
   const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<DeviceItem | null>(null);
   const [deviceDetailsTab, setDeviceDetailsTab] = useState<"overview" | "commands">("overview");
+  const voice = useVoiceAlerts(requests);
 
   // Device Allocation state
   const [allocateModalPatient, setAllocateModalPatient] = useState<PatientItem | null>(null);
@@ -603,6 +605,39 @@ export default function NurseDashboardPage() {
                 <span>{activeTab === "devices" ? "API connected" : "System online"}</span>
               </div>
 
+              {/* Voice alerts: reads new requests aloud, e.g. "Patient on bed 4 wants water" */}
+              {voice.supported && (
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={voice.enabled}
+                  onClick={() => voice.setEnabled(!voice.enabled)}
+                  title={
+                    voice.enabled
+                      ? "Voice alerts on: new requests are read aloud. Click to turn off."
+                      : "Turn on voice alerts to hear new requests read aloud"
+                  }
+                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition ${
+                    voice.enabled
+                      ? "bg-[#FAF0E6] text-[#AD5D3D] border-[#E2C7B8]"
+                      : "bg-[#FFFCF7] text-[#76685F] border-[#E5D9CA] hover:text-[#211C19]"
+                  }`}
+                >
+                  <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M11 5 6 9H3v6h3l5 4V5z" />
+                    {voice.enabled ? (
+                      <>
+                        <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                        <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+                      </>
+                    ) : (
+                      <path d="m16 9 5 6m0-6-5 6" />
+                    )}
+                  </svg>
+                  <span>{voice.needsClick ? "Voice: click to allow" : voice.enabled ? "Voice alerts on" : "Voice alerts off"}</span>
+                </button>
+              )}
+
               {/* Refresh button */}
               <button
                 type="button"
@@ -928,6 +963,15 @@ export default function NurseDashboardPage() {
                   Real-time bedside gaze &amp; gesture call queue
                 </p>
               </div>
+              {voice.supported && voice.enabled && (
+                <button
+                  type="button"
+                  onClick={() => speak("Patient on bed 4 wants water.", { interrupt: true })}
+                  className="self-start sm:self-auto px-3 py-1.5 rounded-lg text-xs font-bold border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition"
+                >
+                  Test voice
+                </button>
+              )}
             </div>
 
             {/* Search and Filters */}
@@ -1047,6 +1091,20 @@ export default function NurseDashboardPage() {
                               {formatElapsedTime(req.createdAt)}
                             </td>
                             <td className="py-3.5 px-4 text-right whitespace-nowrap">
+                              {voice.supported && (
+                                <button
+                                  type="button"
+                                  onClick={() => voice.announce(req)}
+                                  title={announcementFor(req)}
+                                  aria-label={`Read aloud: ${announcementFor(req)}`}
+                                  className="mr-2 p-1.5 rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition align-middle"
+                                >
+                                  <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M11 5 6 9H3v6h3l5 4V5z" />
+                                    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                                  </svg>
+                                </button>
+                              )}
                               {req.status === "NEW" && (
                                 <button
                                   type="button"

@@ -196,6 +196,7 @@ export interface CareRequestItem {
   ruleId?: string;
   label?: string;
   displayLabel?: string;
+  speechTemplate?: string;
   counts?: { eog: number; emgLeft: number; emgRight: number; together: number };
   action: RequestAction;
   configVersion: number;
@@ -212,6 +213,8 @@ export interface CommandRuleItem {
   id: string;
   label: string;
   displayLabel?: string;
+  /** Dashboard-only voice phrase completing "Patient on bed X ...", e.g. "wants {command}". */
+  speechTemplate?: string;
   eog: [number, number];
   emgLeft: [number, number];
   emgRight: [number, number];

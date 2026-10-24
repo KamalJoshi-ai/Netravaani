@@ -189,6 +189,7 @@ export const commandRuleSchema = z.object({
   id: z.string(),
   label: z.string(),
   displayLabel: z.string().max(80).optional().nullable().transform((v) => v ?? undefined),
+  speechTemplate: z.string().max(120).optional().nullable().transform((v) => v ?? undefined),
   eog: countRange,
   emgLeft: countRange,
   emgRight: countRange,

@@ -34,6 +34,7 @@ export interface IRuleSnapshot {
   id: string;
   label: string;
   displayLabel?: string;
+  speechTemplate?: string;
   eog: [number, number];
   emgLeft: [number, number];
   emgRight: [number, number];

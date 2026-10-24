@@ -46,6 +46,7 @@ export function toCommandRule(r: EditorRule): CommandRuleItem {
   if (r.urgent) out.urgent = true;
   if (r.alarm) out.alarm = true;
   if (r.displayLabel?.trim()) out.displayLabel = r.displayLabel.trim();
+  if (r.speechTemplate?.trim()) out.speechTemplate = r.speechTemplate.trim();
   return out;
 }
 

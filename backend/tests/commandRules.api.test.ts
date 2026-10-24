@@ -191,6 +191,27 @@ describe("Command rules: registration, editor API, device delivery and acknowled
     expect(list.body.data[1]).toMatchObject({ ruleId: "water", displayLabel: "पानी" });
   });
 
+  it("stores voice phrases per rule and returns them with each request", async () => {
+    const seeded = await asNurse(request(app).get(`/api/devices/${deviceId}/rules`));
+    expect(seeded.body.data.rules.find((r: { id: string }) => r.id === "water").speechTemplate).toBe("wants {command}");
+
+    const rules = seeded.body.data.rules.map((r: { id: string }) =>
+      r.id === "water" ? { ...r, speechTemplate: "would like some {command}" } : r
+    );
+    await asNurse(request(app).put(`/api/devices/${deviceId}/rules`)).send({ rules });
+
+    // The phrase is dashboard-only: the device payload is unchanged
+    const cfg = (await request(app).get(`/api/devices/${deviceId}/config`)).text;
+    expect(cfg).not.toContain("speechTemplate");
+
+    await event({ eventType: "PATIENT_REQUEST", ruleId: "water", label: "WATER", configVersion: 2 });
+    await event({ eventType: "PATIENT_REQUEST", ruleId: "emergency", label: "EMERGENCY / SEVERE PAIN", alarm: true, urgent: true, configVersion: 2 });
+    const list = await request(app).get("/api/care-requests");
+    const byRule = (id: string) => list.body.data.find((r: { ruleId: string }) => r.ruleId === id);
+    expect(byRule("water").speechTemplate).toBe("would like some {command}");
+    expect(byRule("emergency").speechTemplate).toBe("is in {command}");
+  });
+
   it("backfill gives existing devices without rules the defaults, once", async () => {
     await Device.create({ deviceId: "npg-legacy01", name: "Old unit", status: "AVAILABLE", connectivityStatus: "NEVER_SEEN" });
     expect(await commandRuleService.backfillDefaults()).toBe(1);
