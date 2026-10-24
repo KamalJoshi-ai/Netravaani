@@ -9,6 +9,7 @@ export interface ICommandRule extends Document {
   ruleKey: string; // sent to the device as "id": ^[a-z0-9_-]{1,24}$, unique per device
   label: string; // sent to the device: 1-40 printable ASCII characters
   displayLabel?: string; // dashboard-only, any language or emoji, never sent to the device
+  speechTemplate?: string; // dashboard-only voice phrase, e.g. "wants {command}"
   eogMin: number;
   eogMax: number;
   leftMin: number;
@@ -31,6 +32,7 @@ const CommandRuleSchema = new Schema<ICommandRule>(
     ruleKey: { type: String, required: true, trim: true },
     label: { type: String, required: true },
     displayLabel: { type: String, trim: true },
+    speechTemplate: { type: String, trim: true, maxlength: 120 },
     eogMin: count,
     eogMax: count,
     leftMin: count,

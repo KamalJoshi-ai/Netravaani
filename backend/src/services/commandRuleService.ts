@@ -14,10 +14,16 @@ import {
   validateRuleSet,
   validateRuleSetAll,
 } from "../shared/commandRules.js";
+import { DEFAULT_SPEECH_TEMPLATES } from "../shared/speechDefaults.js";
+
+/** The six defaults with their voice phrases. */
+const defaultEditableRules = (): EditableRule[] =>
+  DEFAULT_RULES.map((r) => ({ ...r, speechTemplate: DEFAULT_SPEECH_TEMPLATES[r.id] }));
 
 /** A rule as the dashboard edits it: the device rule plus its dashboard-only name. */
 export interface EditableRule extends RuleSpec {
   displayLabel?: string;
+  speechTemplate?: string;
 }
 
 export interface FieldError {
@@ -51,6 +57,7 @@ function docToRule(r: ICommandRule): EditableRule {
   if (r.urgent) out.urgent = true;
   if (r.alarm) out.alarm = true;
   if (r.displayLabel) out.displayLabel = r.displayLabel;
+  if (r.speechTemplate) out.speechTemplate = r.speechTemplate;
   return out;
 }
 
@@ -60,6 +67,7 @@ function ruleToDoc(device: Types.ObjectId, r: EditableRule, sortOrder: number) {
     ruleKey: r.id,
     label: r.label,
     displayLabel: r.displayLabel?.trim() || undefined,
+    speechTemplate: r.speechTemplate?.trim() || undefined,
     eogMin: r.eog[0],
     eogMax: r.eog[1],
     leftMin: r.emgLeft[0],
@@ -85,6 +93,7 @@ function toSnapshot(r: EditableRule): IRuleSnapshot {
   if (r.urgent) s.urgent = true;
   if (r.alarm) s.alarm = true;
   if (r.displayLabel?.trim()) s.displayLabel = r.displayLabel.trim();
+  if (r.speechTemplate?.trim()) s.speechTemplate = r.speechTemplate.trim();
   return s;
 }
 
@@ -200,7 +209,7 @@ export class CommandRuleService {
   async seedDefaults(device: IDevice, session?: ClientSession, createdBy = "system"): Promise<boolean> {
     const existing = await CommandRule.countDocuments({ device: device._id }).session(session || null);
     if (existing > 0) return false;
-    await this.writeVersion(device, DEFAULT_RULES, createdBy, session);
+    await this.writeVersion(device, defaultEditableRules(), createdBy, session);
     return true;
   }
 
@@ -248,7 +257,7 @@ export class CommandRuleService {
   }
 
   async resetToDefaults(deviceId: string, createdBy?: string) {
-    return this.saveRules(deviceId, DEFAULT_RULES, createdBy);
+    return this.saveRules(deviceId, defaultEditableRules(), createdBy);
   }
 
   /** Re-issues an older version's rules as a new version. */
