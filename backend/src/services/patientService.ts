@@ -14,6 +14,7 @@ export interface CreatePatientDto {
   bedLabel?: string;
   status?: PatientStatus;
   password?: string;
+  deviceId?: string;
 }
 
 export const PREDEFINED_COMMANDS = [
@@ -83,6 +84,20 @@ export class PatientService {
         status: "NONE",
       },
     });
+
+    if (data.deviceId) {
+      try {
+        const { assignmentService } = await import("./assignmentService.js");
+        await assignmentService.assignDevice({
+          deviceId: data.deviceId,
+          patientCode,
+          assignedBy: "Clinical Intake",
+          reassign: true,
+        });
+      } catch (assignErr) {
+        // Log or silently ignore if device assignment fails during initial registration
+      }
+    }
 
     return patient;
   }
@@ -185,7 +200,7 @@ export class PatientService {
   // Patient Authentication
   async patientLogin(patientCode: string, passwordCandidate: string) {
     const trimmedCode = (patientCode || "").trim();
-    let patient = await Patient.findOne({
+    let patient: any = await Patient.findOne({
       $or: [
         { patientCode: trimmedCode },
         { patientCode: trimmedCode.toUpperCase() },

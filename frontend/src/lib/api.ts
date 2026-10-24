@@ -406,7 +406,7 @@ class ApiClient {
 
   async assignDevice(
     deviceId: string,
-    data: { patientCode: string; assignedBy?: string }
+    data: { patientCode: string; assignedBy?: string; reassign?: boolean }
   ): Promise<ApiResponse<DeviceAssignmentRecord>> {
     return this.request<ApiResponse<DeviceAssignmentRecord>>(`/devices/${deviceId}/assign`, {
       method: "POST",
@@ -418,6 +418,28 @@ class ApiClient {
     return this.request<ApiResponse<DeviceAssignmentRecord>>(`/devices/${deviceId}/unassign`, {
       method: "POST",
       body: JSON.stringify({}),
+    });
+  }
+
+  async allocateDeviceToPatient(
+    patientCode: string,
+    deviceId: string,
+    assignedBy?: string,
+    reassign?: boolean
+  ): Promise<ApiResponse<DeviceAssignmentRecord>> {
+    return this.request<ApiResponse<DeviceAssignmentRecord>>(`/patients/${patientCode}/assign-device`, {
+      method: "POST",
+      body: JSON.stringify({ deviceId, assignedBy, reassign }),
+    });
+  }
+
+  async deallocateDeviceFromPatient(
+    patientCode: string,
+    deviceId?: string
+  ): Promise<ApiResponse<DeviceAssignmentRecord>> {
+    return this.request<ApiResponse<DeviceAssignmentRecord>>(`/patients/${patientCode}/unassign-device`, {
+      method: "POST",
+      body: JSON.stringify({ deviceId }),
     });
   }
 
@@ -512,6 +534,7 @@ class ApiClient {
     displayName: string;
     bedLabel?: string;
     status?: "ACTIVE" | "INACTIVE";
+    deviceId?: string;
   }): Promise<ApiResponse<PatientItem>> {
     return this.request<ApiResponse<PatientItem>>("/patients", {
       method: "POST",

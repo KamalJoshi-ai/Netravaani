@@ -91,6 +91,7 @@ export const createPatientSchema = z.object({
   displayName: z.string().trim().min(2, "Display name must be at least 2 characters").max(100),
   bedLabel: z.string().trim().max(30).optional(),
   status: z.enum(PatientStatusEnum).default("ACTIVE"),
+  deviceId: z.string().trim().optional(),
 });
 
 export const listPatientsQuerySchema = z.object({
@@ -103,6 +104,7 @@ export const listPatientsQuerySchema = z.object({
 export const assignDeviceSchema = z.object({
   patientCode: z.string().trim().min(1, "patientCode is required"),
   assignedBy: z.string().trim().max(60).optional(),
+  reassign: z.boolean().optional(),
 });
 
 export const unassignDeviceSchema = z.object({

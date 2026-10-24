@@ -1,6 +1,10 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { patientService, PREDEFINED_COMMANDS } from "../services/patientService.js";
+import { assignmentService } from "../services/assignmentService.js";
+import { Patient } from "../models/Patient.js";
+import { DeviceAssignment } from "../models/DeviceAssignment.js";
+import { AppError } from "../middleware/errorHandler.js";
 import User from "../models/User.js";
 import {
   createPatientSchema,
@@ -216,3 +220,69 @@ export const getPredefinedCommands = async (_req: Request, res: Response): Promi
     data: PREDEFINED_COMMANDS,
   });
 };
+
+// Allocate a Device to Patient
+export const allocateDeviceToPatient = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { patientCode } = req.params;
+    const { deviceId, assignedBy, reassign } = req.body || {};
+    if (!deviceId) {
+      throw new AppError(400, "DEVICE_ID_REQUIRED", "deviceId is required to allocate a device to a patient");
+    }
+    const assignment = await assignmentService.assignDevice({
+      deviceId,
+      patientCode,
+      assignedBy,
+      reassign,
+    });
+    res.status(200).json({
+      status: "success",
+      message: `Device '${deviceId}' allocated to patient '${patientCode}' successfully`,
+      data: assignment,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+// Deallocate Device from Patient
+export const deallocateDeviceFromPatient = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+  try {
+    const { patientCode } = req.params;
+    const { deviceId, notes } = req.body || {};
+    let targetDeviceId = deviceId;
+    if (!targetDeviceId) {
+      const patient = await Patient.findOne({
+        $or: [
+          { patientCode },
+          { patientCode: patientCode.toUpperCase() },
+          { patientCode: patientCode.toLowerCase() },
+        ],
+      });
+      if (!patient) {
+        throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+      }
+      const activeAssignment = await DeviceAssignment.findOne({
+        patient: patient._id,
+        isActive: true,
+      }).populate("device");
+      if (!activeAssignment || !activeAssignment.device) {
+        throw new AppError(404, "NO_ACTIVE_ASSIGNMENT", `Patient '${patientCode}' does not have an active device allocated`);
+      }
+      targetDeviceId = (activeAssignment.device as any).deviceId;
+    }
+
+    const assignment = await assignmentService.unassignDevice({
+      deviceId: targetDeviceId,
+      notes,
+    });
+    res.status(200).json({
+      status: "success",
+      message: `Device '${targetDeviceId}' deallocated from patient '${patientCode}' successfully`,
+      data: assignment,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

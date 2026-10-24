@@ -190,6 +190,7 @@ export const assignDevice = async (req: Request, res: Response, next: NextFuncti
       deviceId,
       patientCode: validated.patientCode,
       assignedBy: validated.assignedBy,
+      reassign: validated.reassign,
     });
     res.status(200).json({
       status: "success",

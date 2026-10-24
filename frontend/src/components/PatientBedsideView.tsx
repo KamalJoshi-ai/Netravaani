@@ -236,9 +236,14 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   {patient?.patientCode || "ACTIVE"}
                 </span>
               </div>
-              <span className="text-xs text-[#76685F] font-medium flex items-center gap-1.5 mt-0.5">
+              <span className="text-xs text-[#76685F] font-medium flex items-center gap-1.5 mt-0.5 flex-wrap">
                 <span className="w-2 h-2 rounded-full bg-[#42765A] animate-pulse" />
                 Bedside Terminal &bull; Bed: <strong className="text-[#211C19]">{patient?.bedLabel || "Active"}</strong>
+                {patient?.currentAssignment?.device && (
+                  <>
+                    &bull; Gateway: <strong className="font-mono text-[#211C19]">{patient.currentAssignment.device.name || patient.currentAssignment.device.deviceId}</strong>
+                  </>
+                )}
               </span>
             </div>
           </div>
@@ -395,6 +400,29 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
             </p>
           )}
         </section>
+
+        {/* BEDSIDE ALLOCATED HARDWARE GATEWAY BANNER */}
+        {patient?.currentAssignment?.device && (
+          <section className="bg-gradient-to-r from-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
+            <div className="flex items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF] flex items-center justify-center shrink-0">
+                <span className="w-2.5 h-2.5 rounded-full bg-[#42765A] animate-ping" />
+              </div>
+              <div>
+                <div className="text-xs font-bold text-[#211C19]">
+                  Bedside Hardware Gateway Allocated: <span className="font-mono text-[#42765A]">{patient.currentAssignment.device.name || patient.currentAssignment.device.deviceId}</span>
+                </div>
+                <div className="text-[11px] text-[#76685F]">
+                  Firmware {patient.currentAssignment.device.firmwareVersion || "v1.1.1"} &bull; Real-time gaze &amp; gesture triggers linked directly to this bedside terminal
+                </div>
+              </div>
+            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF] self-start sm:self-auto">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>Hardware Active</span>
+            </span>
+          </section>
+        )}
 
         {/* 2. BEDSIDE GESTURE DISPLAY MATRIX (5 Calibrated Clinical Commands - Display Only) */}
         <section className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] p-5 sm:p-6 rounded-2xl shadow-subtle space-y-4 relative overflow-hidden">

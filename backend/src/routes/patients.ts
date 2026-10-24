@@ -12,6 +12,8 @@ import {
   rejectNurse,
   triggerCommand,
   getPredefinedCommands,
+  allocateDeviceToPatient,
+  deallocateDeviceFromPatient,
 } from "../controllers/patientController.js";
 
 import { Patient } from "../models/Patient.js";
@@ -53,3 +55,8 @@ patientRouter.post("/:patientCode/reject-nurse", rejectNurse);
 
 // Command Execution by Patient Bedside Terminal
 patientRouter.post("/:patientCode/trigger-command", triggerCommand);
+
+// Device Allocation to Patient
+patientRouter.post("/:patientCode/assign-device", allocateDeviceToPatient);
+patientRouter.post("/:patientCode/unassign-device", deallocateDeviceFromPatient);
+

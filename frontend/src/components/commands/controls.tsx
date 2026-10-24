@@ -350,16 +350,27 @@ export function StatusPill({
   justApplied: boolean;
 }) {
   if (version.status === "PENDING") {
+    if (deviceSeenRecently) {
+      return (
+        <div className="flex flex-col gap-1">
+          <span className="nv-pending-pulse inline-flex w-fit items-center gap-2 rounded-full border border-[#E2C7B8] bg-[#FAF0E6] px-3 py-1 text-xs font-bold text-[#AD5D3D]">
+            <span className="h-2 w-2 rounded-full bg-[#AD5D3D]" />
+            Waiting for device… (v{version.version})
+          </span>
+          <span className="text-[11px] text-[#76685F]">
+            The device picks it up within about 10 seconds.
+          </span>
+        </div>
+      );
+    }
     return (
       <div className="flex flex-col gap-1">
-        <span className="nv-pending-pulse inline-flex w-fit items-center gap-2 rounded-full border border-[#E2C7B8] bg-[#FAF0E6] px-3 py-1 text-xs font-bold text-[#AD5D3D]">
-          <span className="h-2 w-2 rounded-full bg-[#AD5D3D]" />
-          Waiting for device… (v{version.version})
+        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#E5D9CA] bg-[#F5ECE6] px-3 py-1 text-xs font-bold text-[#76685F]">
+          <span className="h-2 w-2 rounded-full bg-[#9E8E81]" />
+          Device offline (v{version.version} queued)
         </span>
         <span className="text-[11px] text-[#76685F]">
-          {deviceSeenRecently
-            ? "The device picks it up within about 10 seconds."
-            : "Device offline: will apply when it reconnects."}
+          Device offline: will apply when it reconnects.
         </span>
       </div>
     );

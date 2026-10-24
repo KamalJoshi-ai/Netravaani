@@ -29,6 +29,10 @@ import {
   User,
   X,
   SlidersHorizontal,
+  Link2,
+  Unlink,
+  Plus,
+  Bell,
 } from "@/lib/noIcons";
 import { useAuth } from "@/lib/auth";
 import LoginForm from "@/components/LoginForm";
@@ -98,6 +102,25 @@ export default function NurseDashboardPage() {
   const [isBleModalOpen, setIsBleModalOpen] = useState(false);
   const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<DeviceItem | null>(null);
   const [deviceDetailsTab, setDeviceDetailsTab] = useState<"overview" | "commands">("overview");
+
+  // Device Allocation state
+  const [allocateModalPatient, setAllocateModalPatient] = useState<PatientItem | null>(null);
+  const [allocateModalDevice, setAllocateModalDevice] = useState<DeviceItem | null>(null);
+  const [selectedAllocateDeviceId, setSelectedAllocateDeviceId] = useState<string>("");
+  const [selectedAllocatePatientCode, setSelectedAllocatePatientCode] = useState<string>("");
+  const [deviceSearchQuery, setDeviceSearchQuery] = useState("");
+  const [manualDeviceId, setManualDeviceId] = useState("");
+  const [showManualDeviceInput, setShowManualDeviceInput] = useState(false);
+  const [forceReassign, setForceReassign] = useState(true);
+  const [allocatingDevice, setAllocatingDevice] = useState(false);
+  const [deviceDeallocatingMap, setDeviceDeallocatingMap] = useState<Record<string, boolean>>({});
+
+  // Add Patient Modal State
+  const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
+  const [newPatientName, setNewPatientName] = useState("");
+  const [newPatientBed, setNewPatientBed] = useState("");
+  const [newPatientParticularDevice, setNewPatientParticularDevice] = useState("");
+  const [creatingPatient, setCreatingPatient] = useState(false);
 
   // In-place confirmation dialog state (does NOT jump to top of page)
   const [stepConfirm, setStepConfirm] = useState<StepConfirmData | null>(null);
@@ -283,23 +306,6 @@ export default function NurseDashboardPage() {
     }
   };
 
-  // Nurse Direct Allocation
-  const handleDirectAllocatePatient = async (patientCode: string) => {
-    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
-    try {
-      await apiClient.allocateNurse(patientCode, {
-        nurseName: user?.name || "Staff Nurse",
-        nurseId: user?.id || user?.email || "nurse-station",
-        nurseRole: user?.role || "nurse",
-      });
-      showToast(`Patient ${patientCode} allocated to you successfully.`);
-      fetchAuxData();
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to allocate patient", true);
-    } finally {
-      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
-    }
-  };
 
   // Nurse Deallocate Patient
   const handleDeallocatePatient = async (patientCode: string) => {
@@ -312,6 +318,135 @@ export default function NurseDashboardPage() {
       showToast(err instanceof Error ? err.message : "Failed to deallocate patient", true);
     } finally {
       setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
+    }
+  };
+
+  // Patients without active device assignment
+  const unassignedPatients = useMemo(() => {
+    return patients.filter((p) => !p.currentAssignment?.device);
+  }, [patients]);
+  const filteredDevicesForModal = useMemo(() => {
+    const query = deviceSearchQuery.trim().toLowerCase();
+    if (!query) return devices;
+    return devices.filter(
+      (d) =>
+        d.deviceId.toLowerCase().includes(query) ||
+        (d.name && d.name.toLowerCase().includes(query)) ||
+        (d.hardwareId && d.hardwareId.toLowerCase().includes(query))
+    );
+  }, [devices, deviceSearchQuery]);
+
+  // Open modal targeting a specific patient to select an available device
+  const handleOpenAllocateToPatient = (patient: PatientItem) => {
+    setAllocateModalPatient(patient);
+    setAllocateModalDevice(null);
+    setSelectedAllocatePatientCode(patient.patientCode);
+    setDeviceSearchQuery("");
+    setManualDeviceId("");
+    setShowManualDeviceInput(false);
+    setForceReassign(true);
+    const initialDevId =
+      patient.currentAssignment?.device?.deviceId ||
+      devices.find((d) => d.status !== "DISABLED" && (!d.currentAssignment || d.status === "AVAILABLE"))?.deviceId ||
+      devices[0]?.deviceId ||
+      "";
+    setSelectedAllocateDeviceId(initialDevId);
+  };
+
+  // Open modal targeting a specific device to select an unassigned patient
+  const handleOpenAllocateDeviceToPatient = (device: DeviceItem) => {
+    setAllocateModalDevice(device);
+    setAllocateModalPatient(null);
+    setSelectedAllocateDeviceId(device.deviceId);
+    setDeviceSearchQuery("");
+    setManualDeviceId("");
+    setShowManualDeviceInput(false);
+    setForceReassign(true);
+    const firstUnassignedPt = patients.find((p) => !p.currentAssignment?.device) || patients[0];
+    setSelectedAllocatePatientCode(firstUnassignedPt?.patientCode || "");
+  };
+
+  const handleCloseAllocateModal = () => {
+    setAllocateModalPatient(null);
+    setAllocateModalDevice(null);
+    setSelectedAllocateDeviceId("");
+    setSelectedAllocatePatientCode("");
+    setDeviceSearchQuery("");
+    setManualDeviceId("");
+    setShowManualDeviceInput(false);
+  };
+
+  // Submit device allocation to assign patient with a particular device
+  const handleConfirmAllocateDevice = async () => {
+    const targetDevId = (manualDeviceId.trim() || selectedAllocateDeviceId || "").trim();
+    if (!targetDevId || !selectedAllocatePatientCode) {
+      showToast("Please specify both a particular device and a patient to assign.", true);
+      return;
+    }
+    setAllocatingDevice(true);
+    try {
+      await apiClient.assignDevice(targetDevId, {
+        patientCode: selectedAllocatePatientCode,
+        assignedBy: user?.name || user?.email || "Staff Nurse",
+        reassign: forceReassign,
+      });
+      showToast(`Particular device ${targetDevId} assigned to patient ${selectedAllocatePatientCode} successfully!`);
+      handleCloseAllocateModal();
+      await fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to assign device to patient", true);
+    } finally {
+      setAllocatingDevice(false);
+    }
+  };
+
+  // Deallocate device
+  const handleDeallocateDevice = async (deviceId: string, patientNameOrCode?: string) => {
+    setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: true }));
+    try {
+      await apiClient.unassignDevice(deviceId);
+      showToast(`Device ${deviceId} unassigned from ${patientNameOrCode || "patient"} successfully.`);
+      await fetchAuxData();
+      if (selectedDeviceDetails && selectedDeviceDetails.deviceId === deviceId) {
+        setSelectedDeviceDetails(null);
+      }
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to unassign device", true);
+    } finally {
+      setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: false }));
+    }
+  };
+
+  // Register a new patient and optionally assign a particular device immediately
+  const handleCreatePatientWithDevice = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPatientName.trim()) {
+      showToast("Please enter patient display name.", true);
+      return;
+    }
+    setCreatingPatient(true);
+    try {
+      const res = await apiClient.createPatient({
+        displayName: newPatientName.trim(),
+        bedLabel: newPatientBed.trim() || undefined,
+        deviceId: newPatientParticularDevice.trim() || undefined,
+      });
+      if (res.data) {
+        showToast(
+          `Patient ${res.data.displayName} (${res.data.patientCode}) registered${
+            newPatientParticularDevice ? ` & assigned with device ${newPatientParticularDevice}` : ""
+          } successfully!`
+        );
+      }
+      setIsAddPatientModalOpen(false);
+      setNewPatientName("");
+      setNewPatientBed("");
+      setNewPatientParticularDevice("");
+      await fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to register patient", true);
+    } finally {
+      setCreatingPatient(false);
     }
   };
 
@@ -973,6 +1108,14 @@ export default function NurseDashboardPage() {
                   Direct Nurse Care Allocation &amp; Telemetry Streams
                 </p>
               </div>
+              <button
+                type="button"
+                onClick={() => setIsAddPatientModalOpen(true)}
+                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#211C19] hover:bg-[#362E2A] text-white transition shadow-xs self-start sm:self-auto"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Register Patient &amp; Assign Device</span>
+              </button>
             </div>
 
             {/* Patients Grid */}
@@ -1014,13 +1157,57 @@ export default function NurseDashboardPage() {
                         </h3>
 
                         {/* Device allocation */}
-                        <div className="mt-3 pt-3 border-t border-[#E5D9CA]/80 space-y-1.5 text-xs">
+                        <div className="mt-3 pt-3 border-t border-[#E5D9CA]/80 space-y-2 text-xs">
                           <div className="flex items-center justify-between">
-                            <span className="text-[#76685F]">Assigned Device:</span>
-                            <span className="font-mono font-bold text-[#211C19]">
-                              {assignedDevice?.name || assignedDevice?.deviceId || "No Device Linked"}
-                            </span>
+                            <span className="text-[#76685F] font-medium">Assigned Device:</span>
+                            {assignedDevice ? (
+                              <span className="inline-flex items-center gap-1.5 font-mono font-bold text-[#42765A] bg-[#EDF5F0] border border-[#C5DDCF] px-2 py-0.5 rounded-lg text-[11px]">
+                                <span className="w-1.5 h-1.5 rounded-full bg-[#42765A] animate-pulse" />
+                                {assignedDevice.name || assignedDevice.deviceId}
+                              </span>
+                            ) : (
+                              <span className="text-[#76685F] italic">No Device Linked</span>
+                            )}
                           </div>
+
+                          {/* Quick Device Allocation / Deallocation Action */}
+                          <div className="flex items-center justify-between pt-0.5">
+                            <span className="text-[#76685F] font-medium">Device Option:</span>
+                            {assignedDevice ? (
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleOpenAllocateToPatient(pt)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#AD5D3D] hover:text-[#964F33] bg-[#FAF0E6] hover:bg-[#F5ECE6] border border-[#E2C7B8] px-2 py-1 rounded-lg transition shadow-2xs"
+                                  title="Switch or reassign to a particular device"
+                                >
+                                  <RefreshCw className="w-2.5 h-2.5" />
+                                  <span>Switch</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deviceDeallocatingMap[assignedDevice.deviceId]}
+                                  onClick={() => handleDeallocateDevice(assignedDevice.deviceId, pt.displayName)}
+                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#B42318] hover:text-[#912018] bg-[#FEF3F2] hover:bg-[#FEE4E2] border border-[#FECDCA] px-2 py-1 rounded-lg transition shadow-2xs"
+                                  title="Unassign device from patient"
+                                >
+                                  <Unlink className="w-2.5 h-2.5" />
+                                  <span>{deviceDeallocatingMap[assignedDevice.deviceId] ? "..." : "Unassign"}</span>
+                                </button>
+                              </div>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => handleOpenAllocateToPatient(pt)}
+                                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-[#AD5D3D] hover:bg-[#964F33] px-2.5 py-1 rounded-lg transition shadow-2xs"
+                                title="Assign a particular device to this patient"
+                              >
+                                <Link2 className="w-3 h-3" />
+                                <span>Assign Device</span>
+                              </button>
+                            )}
+                          </div>
+
                           <div className="flex items-center justify-between">
                             <span className="text-[#76685F]">Care Link Status:</span>
                             <span
@@ -1047,24 +1234,14 @@ export default function NurseDashboardPage() {
                             <div className="text-center text-xs text-[#AD5D3D] font-semibold py-1">
                               Awaiting bedside screen approval
                             </div>
-                            <div className="flex items-center gap-2">
-                              <button
-                                type="button"
-                                disabled={nurseAssignLoading[pt.patientCode]}
-                                onClick={() => handleDirectAllocatePatient(pt.patientCode)}
-                                className="flex-1 py-1.5 px-2 rounded-xl text-[11px] font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs"
-                              >
-                                Allocate Directly
-                              </button>
-                              <button
-                                type="button"
-                                disabled={nurseAssignLoading[pt.patientCode]}
-                                onClick={() => handleDeallocatePatient(pt.patientCode)}
-                                className="py-1.5 px-2.5 rounded-xl text-[11px] font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:bg-[#FEF3F2] transition text-center shadow-xs"
-                              >
-                                Cancel
-                              </button>
-                            </div>
+                            <button
+                              type="button"
+                              disabled={nurseAssignLoading[pt.patientCode]}
+                              onClick={() => handleDeallocatePatient(pt.patientCode)}
+                              className="w-full py-1.5 px-2.5 rounded-xl text-[11px] font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:bg-[#FEF3F2] transition text-center shadow-xs"
+                            >
+                              {nurseAssignLoading[pt.patientCode] ? "Cancelling..." : "Cancel Request"}
+                            </button>
                           </div>
                         ) : nurseAuth?.status === "APPROVED" ? (
                           <div className="space-y-2">
@@ -1082,25 +1259,16 @@ export default function NurseDashboardPage() {
                             </button>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-2">
-                            <button
-                              type="button"
-                              disabled={nurseAssignLoading[pt.patientCode]}
-                              onClick={() => handleDirectAllocatePatient(pt.patientCode)}
-                              className="flex-1 py-2 px-3 rounded-xl text-xs font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs"
-                            >
-                              {nurseAssignLoading[pt.patientCode] ? "Allocating..." : "Allocate Patient"}
-                            </button>
-                            <button
-                              type="button"
-                              title="Send approval request to bedside"
-                              disabled={nurseAssignLoading[pt.patientCode]}
-                              onClick={() => handleRequestPatientAssignment(pt.patientCode)}
-                              className="py-2 px-2.5 rounded-xl text-xs font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#211C19] hover:bg-[#F7F2EB] transition text-center shadow-xs"
-                            >
-                              Request Link
-                            </button>
-                          </div>
+                          <button
+                            type="button"
+                            title="Send approval request to bedside"
+                            disabled={nurseAssignLoading[pt.patientCode]}
+                            onClick={() => handleRequestPatientAssignment(pt.patientCode)}
+                            className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          >
+                            <Bell className="w-3.5 h-3.5" />
+                            <span>{nurseAssignLoading[pt.patientCode] ? "Requesting..." : "Request Link"}</span>
+                          </button>
                         )}
                       </div>
                     </div>
@@ -1368,16 +1536,16 @@ export default function NurseDashboardPage() {
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <button
                           type="button"
                           onClick={() => {
                             setDeviceDetailsTab("overview");
                             setSelectedDeviceDetails(d);
                           }}
-                          className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
                         >
-                          <span>View device details</span>
+                          <span>Details</span>
                           <ArrowUpRight className="w-3.5 h-3.5" />
                         </button>
                         <button
@@ -1386,11 +1554,31 @@ export default function NurseDashboardPage() {
                             setDeviceDetailsTab("commands");
                             setSelectedDeviceDetails(d);
                           }}
-                          className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#AD5D3D] hover:text-[#964F33] border border-[#E2C7B8] bg-[#FAF0E6]/60 hover:bg-[#F5ECE6] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#AD5D3D] hover:text-[#964F33] border border-[#E2C7B8] bg-[#FAF0E6]/60 hover:bg-[#F5ECE6] transition text-center shadow-xs flex items-center justify-center gap-1.5"
                         >
                           <SlidersHorizontal className="w-3.5 h-3.5" />
                           <span>Commands</span>
                         </button>
+                        {d.currentAssignment ? (
+                          <button
+                            type="button"
+                            disabled={deviceDeallocatingMap[d.deviceId]}
+                            onClick={() => handleDeallocateDevice(d.deviceId, d.currentAssignment?.patient?.displayName)}
+                            className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#B42318] hover:text-[#912018] border border-[#FECDCA] bg-[#FEF3F2] hover:bg-[#FEE4E2] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          >
+                            <Unlink className="w-3.5 h-3.5" />
+                            <span>{deviceDeallocatingMap[d.deviceId] ? "Unassigning..." : "Unassign"}</span>
+                          </button>
+                        ) : (
+                          <button
+                            type="button"
+                            onClick={() => handleOpenAllocateDeviceToPatient(d)}
+                            className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-white bg-[#42765A] hover:bg-[#355F49] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          >
+                            <Link2 className="w-3.5 h-3.5" />
+                            <span>Allocate</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1575,15 +1763,47 @@ export default function NurseDashboardPage() {
                 <span className="text-[#76685F]">Connectivity</span>
                 <span className="font-bold text-[#42765A]">{selectedDeviceDetails.connectivityStatus || "ONLINE"}</span>
               </div>
-              <div className="flex justify-between py-1">
+              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
                 <span className="text-[#76685F]">Assigned Bed</span>
                 <span className="font-bold text-[#211C19]">
                   {selectedDeviceDetails.currentAssignment?.patient?.bedLabel || "Unassigned"}
                 </span>
               </div>
+              <div className="flex justify-between py-1">
+                <span className="text-[#76685F]">Assigned Patient</span>
+                <span className="font-bold text-[#211C19]">
+                  {selectedDeviceDetails.currentAssignment?.patient?.displayName || "Unallocated"}
+                </span>
+              </div>
             </div>
 
-            <div className="mt-5 pt-3 border-t border-[#E5D9CA] text-right">
+            <div className="mt-5 pt-3 border-t border-[#E5D9CA] flex items-center justify-between gap-2">
+              <div>
+                {selectedDeviceDetails.currentAssignment ? (
+                  <button
+                    type="button"
+                    disabled={deviceDeallocatingMap[selectedDeviceDetails.deviceId]}
+                    onClick={() => handleDeallocateDevice(selectedDeviceDetails.deviceId, selectedDeviceDetails.currentAssignment?.patient?.displayName)}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-[#B42318] hover:text-[#912018] bg-[#FEF3F2] border border-[#FECDCA] hover:bg-[#FEE4E2] transition flex items-center gap-1.5 shadow-2xs"
+                  >
+                    <Unlink className="w-3.5 h-3.5" />
+                    <span>{deviceDeallocatingMap[selectedDeviceDetails.deviceId] ? "Unassigning..." : "Unassign Device"}</span>
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const dev = selectedDeviceDetails;
+                      setSelectedDeviceDetails(null);
+                      handleOpenAllocateDeviceToPatient(dev);
+                    }}
+                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-[#42765A] hover:bg-[#355F49] transition flex items-center gap-1.5 shadow-xs"
+                  >
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Allocate to Patient</span>
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setSelectedDeviceDetails(null)}
@@ -1594,6 +1814,421 @@ export default function NurseDashboardPage() {
             </div>
             </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* ALLOCATE DEVICE TO PATIENT MODAL */}
+      {(allocateModalPatient || allocateModalDevice) && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#211C19]/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-lg w-full shadow-hover animate-in fade-in zoom-in-95 duration-150 space-y-5 my-8">
+            {/* Header */}
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
+                  <Cpu className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-heading font-bold text-lg text-[#211C19]">
+                    {allocateModalPatient ? "Assign Patient with a Particular Device" : "Assign Device to Patient"}
+                  </h3>
+                  <p className="text-xs text-[#76685F] font-medium">
+                    Link a particular bedside hardware unit to stream real-time patient gaze &amp; gesture telemetry.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                aria-label="Close allocation modal"
+                onClick={handleCloseAllocateModal}
+                className="text-[#76685F] hover:text-[#211C19] p-1.5 rounded-lg hover:bg-[#F5ECE6] transition"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Target Context Summary */}
+            {allocateModalPatient ? (
+              <div className="p-3.5 rounded-xl bg-[#F5ECE6]/60 border border-[#E2C7B8] flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center font-bold text-xs shrink-0">
+                    <User className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#211C19]">
+                      {allocateModalPatient.displayName}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#76685F]">
+                      {allocateModalPatient.patientCode} &bull; Bed: {allocateModalPatient.bedLabel || "Unassigned"}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
+                  Target Patient
+                </span>
+              </div>
+            ) : allocateModalDevice ? (
+              <div className="p-3.5 rounded-xl bg-[#EDF5F0]/60 border border-[#C5DDCF] flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-xl bg-[#EDF5F0] text-[#42765A] flex items-center justify-center shrink-0">
+                    <Cpu className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <div className="text-xs font-bold text-[#211C19]">
+                      {allocateModalDevice.name}
+                    </div>
+                    <div className="text-[11px] font-mono text-[#76685F]">
+                      {allocateModalDevice.deviceId} &bull; FW {allocateModalDevice.firmwareVersion || "v1.1.1"}
+                    </div>
+                  </div>
+                </div>
+                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
+                  Particular Device
+                </span>
+              </div>
+            ) : null}
+
+            {/* Selection Form */}
+            <div className="space-y-4">
+              {/* If picking a device for a patient */}
+              {allocateModalPatient && (
+                <div className="space-y-2.5">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-xs font-bold text-[#211C19]">
+                      Select or Search Particular Device:
+                    </label>
+                    <span className="text-[11px] text-[#76685F]">
+                      {filteredDevicesForModal.length} registered
+                    </span>
+                  </div>
+
+                  {/* Search particular device */}
+                  <div className="relative">
+                    <Search className="w-3.5 h-3.5 text-[#76685F] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+                    <input
+                      type="text"
+                      placeholder="Search particular device by name, ID (e.g. npg-...), or MAC..."
+                      value={deviceSearchQuery}
+                      onChange={(e) => setDeviceSearchQuery(e.target.value)}
+                      className="w-full pl-8 pr-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                    />
+                  </div>
+
+                  {filteredDevicesForModal.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] text-xs space-y-2">
+                      <div className="flex items-center gap-2 font-bold">
+                        <AlertTriangle className="w-4 h-4 shrink-0" />
+                        <span>No Devices Matching Query</span>
+                      </div>
+                      <p className="text-[11px] text-[#76685F] leading-relaxed">
+                        No registered devices match &ldquo;{deviceSearchQuery}&rdquo;.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {filteredDevicesForModal.map((d) => {
+                        const isSelected = selectedAllocateDeviceId === d.deviceId;
+                        const isAssigned = Boolean(d.currentAssignment);
+                        return (
+                          <div
+                            key={d.deviceId}
+                            onClick={() => {
+                              setSelectedAllocateDeviceId(d.deviceId);
+                              setManualDeviceId("");
+                            }}
+                            className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? "border-[#42765A] bg-[#EDF5F0]/70 ring-1 ring-[#42765A]"
+                                : "border-[#E5D9CA] hover:border-[#AD5D3D]/60 bg-[#FFFCF7]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3 min-w-0">
+                              <div
+                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+                                  isSelected ? "bg-[#42765A] text-white" : "bg-[#FAF0E6] text-[#AD5D3D]"
+                                }`}
+                              >
+                                <Cpu className="w-4 h-4" />
+                              </div>
+                              <div className="min-w-0">
+                                <div className="font-bold text-[#211C19] truncate">{d.name}</div>
+                                <div className="text-[11px] font-mono text-[#76685F]">
+                                  {d.deviceId} &bull; FW {d.firmwareVersion || "v1.1.1"}
+                                </div>
+                                {isAssigned && (
+                                  <div className="text-[10px] text-[#AD5D3D] font-medium mt-0.5">
+                                    Currently linked to {d.currentAssignment?.patient?.displayName || "another patient"}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-2 shrink-0">
+                              <span
+                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                                  isAssigned
+                                    ? "bg-[#FAF0E6] text-[#AD5D3D] border border-[#E2C7B8]"
+                                    : d.connectivityStatus === "ONLINE"
+                                    ? "bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]"
+                                    : "bg-[#F5ECE6] text-[#76685F]"
+                                }`}
+                              >
+                                {isAssigned ? "Assigned" : d.connectivityStatus === "ONLINE" ? "Online" : "Available"}
+                              </span>
+                              <div
+                                className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                                  isSelected
+                                    ? "border-[#42765A] bg-[#42765A] text-white"
+                                    : "border-[#D0C2B4] bg-white"
+                                }`}
+                              >
+                                {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Manual Device ID Input Option */}
+                  <div className="pt-1.5 border-t border-[#E5D9CA]/60">
+                    <button
+                      type="button"
+                      onClick={() => setShowManualDeviceInput(!showManualDeviceInput)}
+                      className="text-[11px] font-semibold text-[#AD5D3D] hover:underline flex items-center gap-1"
+                    >
+                      <span>{showManualDeviceInput ? "— Hide direct Device ID input" : "+ Enter particular Device ID manually"}</span>
+                    </button>
+                    {showManualDeviceInput && (
+                      <div className="mt-2 space-y-1">
+                        <label className="block text-[11px] font-bold text-[#211C19]">
+                          Particular Device ID:
+                        </label>
+                        <input
+                          type="text"
+                          placeholder="e.g. npg-1a0efef6"
+                          value={manualDeviceId}
+                          onChange={(e) => {
+                            setManualDeviceId(e.target.value);
+                            setSelectedAllocateDeviceId(e.target.value.trim());
+                          }}
+                          className="w-full px-3 py-1.5 text-xs font-mono rounded-lg bg-[#FFFCF7] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                        />
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* If picking a patient for a device */}
+              {allocateModalDevice && (
+                <div className="space-y-2">
+                  <label className="block text-xs font-bold text-[#211C19]">
+                    Select Patient to Receive Device:
+                  </label>
+                  {unassignedPatients.length === 0 ? (
+                    <div className="p-4 rounded-xl bg-[#F5ECE6] border border-[#E2C7B8] text-xs space-y-1.5 text-[#76685F]">
+                      <div className="font-bold text-[#211C19]">All Patients Already Have Devices</div>
+                      <p className="text-[11px] leading-relaxed">
+                        Every active patient currently has a bedside hardware gateway linked.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {unassignedPatients.map((pt) => {
+                        const isSelected = selectedAllocatePatientCode === pt.patientCode;
+                        return (
+                          <div
+                            key={pt.patientCode}
+                            onClick={() => setSelectedAllocatePatientCode(pt.patientCode)}
+                            className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-center justify-between gap-3 ${
+                              isSelected
+                                ? "border-[#42765A] bg-[#EDF5F0]/70 ring-1 ring-[#42765A]"
+                                : "border-[#E5D9CA] hover:border-[#AD5D3D]/60 bg-[#FFFCF7]"
+                            }`}
+                          >
+                            <div className="flex items-center gap-3">
+                              <div
+                                className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
+                                  isSelected ? "bg-[#42765A] text-white" : "bg-[#FAF0E6] text-[#AD5D3D]"
+                                }`}
+                              >
+                                <User className="w-4 h-4" />
+                              </div>
+                              <div>
+                                <div className="font-bold text-[#211C19]">{pt.displayName}</div>
+                                <div className="text-[11px] font-mono text-[#76685F]">
+                                  {pt.patientCode} &bull; Bed: {pt.bedLabel || "Unassigned"}
+                                </div>
+                              </div>
+                            </div>
+                            <div
+                              className={`w-4 h-4 rounded-full border flex items-center justify-center ${
+                                isSelected
+                                  ? "border-[#42765A] bg-[#42765A] text-white"
+                                  : "border-[#D0C2B4] bg-white"
+                              }`}
+                            >
+                              {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer Buttons */}
+            <div className="pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={handleCloseAllocateModal}
+                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={
+                  Boolean(
+                    allocatingDevice ||
+                    (allocateModalPatient ? (!(selectedAllocateDeviceId || manualDeviceId) || devices.length === 0) : false) ||
+                    (allocateModalDevice ? (!selectedAllocatePatientCode || unassignedPatients.length === 0) : false)
+                  )
+                }
+                onClick={handleConfirmAllocateDevice}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#AD5D3D] hover:bg-[#964F33] text-white transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+              >
+                {allocatingDevice ? (
+                  <>
+                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                    <span>Assigning...</span>
+                  </>
+                ) : (
+                  <>
+                    <Link2 className="w-3.5 h-3.5" />
+                    <span>Confirm Device Assignment</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* REGISTER NEW PATIENT & ASSIGN PARTICULAR DEVICE MODAL */}
+      {isAddPatientModalOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#211C19]/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
+        >
+          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover animate-in fade-in zoom-in-95 duration-150 space-y-4 my-8">
+            <div className="flex items-start justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
+                  <User className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-heading font-bold text-base text-[#211C19]">
+                    Register New Patient
+                  </h3>
+                  <p className="text-[11px] text-[#76685F] font-medium">
+                    Add patient record and assign with a particular hardware device.
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsAddPatientModalOpen(false)}
+                className="text-[#76685F] hover:text-[#211C19] p-1 rounded-lg"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleCreatePatientWithDevice} className="space-y-3.5 pt-1">
+              <div>
+                <label className="block text-xs font-bold text-[#211C19] mb-1">
+                  Full Display Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  placeholder="e.g. Ronald Verma"
+                  value={newPatientName}
+                  onChange={(e) => setNewPatientName(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#211C19] mb-1">
+                  Bed Label / Room
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Bed 104"
+                  value={newPatientBed}
+                  onChange={(e) => setNewPatientBed(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#211C19] mb-1">
+                  Assign with Particular Device (Optional)
+                </label>
+                <select
+                  value={newPatientParticularDevice}
+                  onChange={(e) => setNewPatientParticularDevice(e.target.value)}
+                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                >
+                  <option value="">-- No device (assign later) --</option>
+                  {devices.map((d) => (
+                    <option key={d.deviceId} value={d.deviceId}>
+                      {d.name} ({d.deviceId}) {d.currentAssignment ? `· [Assigned: ${d.currentAssignment.patient?.displayName || "Patient"}]` : "· [Available]"}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-[10px] text-[#76685F] mt-1">
+                  You can pair any registered hardware gateway right now or assign one later.
+                </p>
+              </div>
+
+              <div className="pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsAddPatientModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={creatingPatient || !newPatientName.trim()}
+                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#AD5D3D] hover:bg-[#964F33] text-white transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                >
+                  {creatingPatient ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Creating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Register &amp; Assign</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
