@@ -38,10 +38,22 @@ export function errorHandler(
 
   // Handle MongoDB Duplicate Key Error (11000)
   if (err?.code === 11000) {
+    let msg = "A resource with these unique attributes already exists.";
+    let code = "CONFLICT";
+    if (err?.keyPattern?.username || err?.message?.includes("username")) {
+      msg = "Username is already taken. Please choose another username.";
+      code = "USERNAME_TAKEN";
+    } else if (err?.keyPattern?.email || err?.message?.includes("email")) {
+      msg = "Email is already registered. Please sign in or use another email.";
+      code = "EMAIL_EXISTS";
+    } else if (err?.keyPattern?.bedLabel || err?.message?.includes("bed")) {
+      msg = "This bed is already occupied by another patient.";
+      code = "BED_OCCUPIED";
+    }
     res.status(409).json({
       status: "error",
-      code: "CONFLICT",
-      message: "A resource with these unique attributes already exists.",
+      code,
+      message: msg,
     });
     return;
   }

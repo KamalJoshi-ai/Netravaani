@@ -15,6 +15,11 @@ import {
   allocateDeviceToPatient,
   deallocateDeviceFromPatient,
 } from "../controllers/patientController.js";
+import {
+  proposeBedChange,
+  approveBedAssignment,
+  rejectBedAssignment,
+} from "../controllers/bedController.js";
 
 import { Patient } from "../models/Patient.js";
 
@@ -52,6 +57,14 @@ patientRouter.post("/:patientCode/allocate-nurse", allocateNurse);
 patientRouter.post("/:patientCode/deallocate-nurse", deallocateNurse);
 patientRouter.post("/:patientCode/approve-nurse", approveNurse);
 patientRouter.post("/:patientCode/reject-nurse", rejectNurse);
+
+// Bed Assignment Workflow (Propose Bed by Nurse, Approve by Patient, Reject by Patient)
+patientRouter.post("/:patientCode/bed/propose", proposeBedChange);
+patientRouter.post("/:patientCode/propose-bed", proposeBedChange);
+patientRouter.post("/:patientCode/bed/approve", approveBedAssignment);
+patientRouter.post("/:patientCode/approve-bed", approveBedAssignment);
+patientRouter.post("/:patientCode/bed/reject", rejectBedAssignment);
+patientRouter.post("/:patientCode/reject-bed", rejectBedAssignment);
 
 // Command Execution by Patient Bedside Terminal
 patientRouter.post("/:patientCode/trigger-command", triggerCommand);

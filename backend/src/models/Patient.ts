@@ -1,8 +1,11 @@
 import mongoose, { Schema, Document, Types } from "mongoose";
 import bcrypt from "bcryptjs";
 
-export const PatientStatusEnum = ["ACTIVE", "INACTIVE"] as const;
+export const PatientStatusEnum = ["ACTIVE", "INACTIVE", "PENDING_BED_APPROVAL"] as const;
 export type PatientStatus = (typeof PatientStatusEnum)[number];
+
+export const PatientBedStatusEnum = ["NONE", "PENDING_APPROVAL", "OCCUPIED"] as const;
+export type PatientBedStatus = (typeof PatientBedStatusEnum)[number];
 
 export const NurseAssignmentStatusEnum = [
   "NONE",
@@ -28,6 +31,12 @@ export interface IPatient extends Document {
   email?: string;
   userId?: string | Types.ObjectId;
   bedLabel?: string;
+  pendingBedLabel?: string;
+  bedStatus: PatientBedStatus;
+  bedAssignedBy?: string;
+  bedProposedAt?: Date;
+  bedApprovedAt?: Date;
+  bedRejectedAt?: Date;
   status: PatientStatus;
   password?: string;
   nurseAssignment: INurseAssignment;
@@ -93,6 +102,32 @@ const PatientSchema = new Schema<IPatient>(
     bedLabel: {
       type: String,
       trim: true,
+      uppercase: true,
+    },
+    pendingBedLabel: {
+      type: String,
+      trim: true,
+      uppercase: true,
+    },
+    bedStatus: {
+      type: String,
+      enum: PatientBedStatusEnum,
+      default: "NONE",
+      required: true,
+      index: true,
+    },
+    bedAssignedBy: {
+      type: String,
+      trim: true,
+    },
+    bedProposedAt: {
+      type: Date,
+    },
+    bedApprovedAt: {
+      type: Date,
+    },
+    bedRejectedAt: {
+      type: Date,
     },
     status: {
       type: String,
@@ -145,6 +180,18 @@ PatientSchema.methods.comparePassword = async function (
 };
 
 PatientSchema.index({ status: 1, createdAt: -1 });
+
+// Prevent two patients from holding the same confirmed bed simultaneously
+PatientSchema.index(
+  { bedLabel: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      bedLabel: { $exists: true, $type: "string", $gt: "" },
+      status: "ACTIVE",
+    },
+  }
+);
 
 export const Patient = mongoose.model<IPatient>("Patient", PatientSchema);
 export default Patient;

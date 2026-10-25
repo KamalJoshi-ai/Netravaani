@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { useAuth } from "@/lib/auth";
+import { ThemeToggle } from "@/lib/theme";
 import { Shield, Bed, Mail } from "@/lib/noIcons";
 
 export default function LoginForm() {
@@ -15,6 +16,7 @@ export default function LoginForm() {
 
   // Form Fields
   const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
@@ -33,14 +35,19 @@ export default function LoginForm() {
     try {
       if (authMode === "signup") {
         if (!name.trim()) throw new Error("Full name is required");
+        const normalizedUsername = username.trim().toLowerCase();
+        if (!normalizedUsername) throw new Error("Unique username is required");
+        if (!/^[a-zA-Z0-9_-]{3,30}$/.test(normalizedUsername)) {
+          throw new Error("Username must be 3-30 characters with letters, numbers, underscores, or hyphens only");
+        }
         if (!identifier.trim()) throw new Error("Email address is required");
         if (!password || password.length < 6) {
           throw new Error("Password must be at least 6 characters");
         }
 
-        await register(name.trim(), identifier.trim(), password, signupRole);
+        await register(name.trim(), identifier.trim(), password, signupRole, normalizedUsername);
         setSuccessMsg(
-          `Account registered for ${name.trim()} (${
+          `Account registered for @${normalizedUsername} (${
             signupRole === "patient" ? "Patient" : "Nurse"
           })! Please check your email to verify your account.`
         );
@@ -54,34 +61,48 @@ export default function LoginForm() {
         await login(identifier.trim(), password);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
+      const msg = err instanceof Error ? err.message : "Authentication failed";
+      if (
+        msg.includes("USERNAME_TAKEN") ||
+        msg.toLowerCase().includes("username already taken") ||
+        msg.toLowerCase().includes("username is already taken")
+      ) {
+        setError("This username is already taken. Please choose a different username.");
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen bg-[#F5F1E9] text-[#211C19] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 selection:bg-[#AD5D3D]/20">
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative transition-colors duration-150">
+      {/* Top-Right Theme Toggle */}
+      <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
+        <ThemeToggle />
+      </div>
+
       {/* Brand Header */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
         <div className="flex items-center justify-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl bg-[#211C19] text-[#FFFCF7] flex items-center justify-center font-heading font-black text-sm shadow-xs">
+          <div className="w-10 h-10 rounded-xl bg-[#059669] text-white flex items-center justify-center font-heading font-black text-sm shadow-xs">
             NV
           </div>
-          <h1 className="font-heading text-3xl font-extrabold text-[#211C19] tracking-tight">
-            Netra<span className="font-wordmark font-normal text-[#AD5D3D]">Vaani</span>
+          <h1 className="font-heading text-3xl font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight">
+            Netra<span className="font-wordmark font-normal text-[#059669]">Vaani</span>
           </h1>
         </div>
-        <p className="text-xs sm:text-sm font-medium text-[#76685F]">
+        <p className="text-xs sm:text-sm font-medium text-[#64748B] dark:text-[#94A3B8]">
           Assistive Gaze &amp; Gesture Clinical Platform
         </p>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-[#FFFCF7] py-6 sm:py-7 px-6 sm:px-8 rounded-2xl border border-[#E5D9CA] shadow-card space-y-5">
+        <div className="bg-white dark:bg-[#131B2E] py-6 sm:py-7 px-6 sm:px-8 rounded-2xl border border-[#CBD5E1] dark:border-[#1E293B] shadow-card space-y-5">
           
           {/* Main Auth Mode Tabs: Sign In / Sign Up */}
-          <div className="grid grid-cols-2 p-1 bg-[#F5F1E9] border border-[#E5D9CA] rounded-xl text-xs font-bold">
+          <div className="grid grid-cols-2 p-1 bg-[#F8FAFC] dark:bg-[#0B0F19] border border-[#CBD5E1] dark:border-[#1E293B] rounded-xl text-xs font-bold">
             <button
               type="button"
               onClick={() => {
@@ -91,8 +112,8 @@ export default function LoginForm() {
               }}
               className={`py-2 rounded-lg transition ${
                 authMode === "login"
-                  ? "bg-[#FFFCF7] text-[#211C19] shadow-xs border border-[#E5D9CA]"
-                  : "text-[#76685F] hover:text-[#211C19]"
+                  ? "bg-white dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] shadow-xs border border-[#CBD5E1] dark:border-[#334155]"
+                  : "text-[#64748B] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-[#F8FAFC]"
               }`}
             >
               Sign In
@@ -186,19 +207,38 @@ export default function LoginForm() {
           {/* Form */}
           <form onSubmit={handleSubmit} className="space-y-4">
             {authMode === "signup" && (
-              <div>
-                <label className="block text-xs font-bold text-[#211C19] mb-1.5">
-                  Full Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder={signupRole === "patient" ? "e.g. John Doe" : "e.g. Staff Nurse Maya"}
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
-                />
-              </div>
+              <>
+                <div>
+                  <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+                    Full Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder={signupRole === "patient" ? "e.g. John Doe" : "e.g. Staff Nurse Maya"}
+                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-[#211C19] mb-1.5 flex items-center justify-between">
+                    <span>Unique Username</span>
+                    <span className="text-[10px] text-[#76685F] font-normal">Lowercase, 3-30 chars</span>
+                  </label>
+                  <div className="relative">
+                    <span className="absolute left-3.5 top-2.5 text-[#9E9086] text-xs sm:text-sm font-semibold select-none">@</span>
+                    <input
+                      type="text"
+                      required
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value.toLowerCase().trim())}
+                      placeholder={signupRole === "patient" ? "john_doe" : "nurse_maya"}
+                      className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+                    />
+                  </div>
+                </div>
+              </>
             )}
 
             <div>

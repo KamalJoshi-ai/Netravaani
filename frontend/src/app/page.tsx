@@ -11,9 +11,9 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F5F1E9] flex items-center justify-center p-6 text-[#211C19]">
-        <div className="flex items-center gap-3 bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl px-5 py-3 shadow-subtle">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#AD5D3D] animate-ping" />
+      <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] flex items-center justify-center p-6 text-[#0F172A] dark:text-[#F8FAFC]">
+        <div className="flex items-center gap-3 bg-white dark:bg-[#131B2E] border border-[#CBD5E1] dark:border-[#1E293B] rounded-xl px-5 py-3 shadow-subtle">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#059669] animate-ping" />
           <span className="text-sm font-semibold font-sans">Connecting to NetraVaani...</span>
         </div>
       </div>

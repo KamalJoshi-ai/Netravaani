@@ -62,25 +62,52 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     throw new AppError("User already exists", 409);
   }
 
+  const rawUsername = (req.body.username || normalizedEmail.split("@")[0] || "").trim().toLowerCase();
+  if (!rawUsername) {
+    throw new AppError("Username is required", 400);
+  }
+  if (rawUsername.length < 3 || rawUsername.length > 30 || !/^[a-z0-9_-]+$/.test(rawUsername)) {
+    throw new AppError("Username must be between 3 and 30 characters and contain only letters, numbers, underscores, or hyphens", 400);
+  }
+
+  const existingUsername = await User.findOne({ username: rawUsername });
+  if (existingUsername) {
+    logger.warn("Register failed - username already taken", { username: rawUsername, requestId: reqId });
+    throw new AppError(409, "USERNAME_TAKEN", "Username is already taken. Please choose another username.");
+  }
+
   const plainToken = crypto.randomBytes(32).toString("hex");
   const hashedToken = hashToken(plainToken);
-  const derivedUsername = (req.body.username || normalizedEmail.split("@")[0]).trim().toLowerCase();
 
-  const user = await User.create({
-    name,
-    email: normalizedEmail,
-    username: derivedUsername,
-    password,
-    role: normalizedRole,
-    verificationToken: hashedToken,
-    verificationTokenExpires: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
-    isVerified: false,
-  });
+  let user;
+  try {
+    user = await User.create({
+      name,
+      email: normalizedEmail,
+      username: rawUsername,
+      password,
+      role: normalizedRole,
+      verificationToken: hashedToken,
+      verificationTokenExpires: new Date(Date.now() + VERIFY_TOKEN_TTL_MS),
+      isVerified: false,
+    });
+  } catch (err: any) {
+    if (err?.code === 11000) {
+      if (err?.keyPattern?.username || err?.message?.includes("username")) {
+        throw new AppError("Username is already taken. Please choose another username.", 409);
+      }
+      if (err?.keyPattern?.email || err?.message?.includes("email")) {
+        throw new AppError("Email is already registered. Please sign in or use another email.", 409);
+      }
+      throw new AppError("A user with these unique credentials already exists.", 409);
+    }
+    throw err;
+  }
 
   // If registering as patient, ensure a corresponding clinical Patient document exists
   if (normalizedRole === "patient") {
     try {
-      const cleanCode = (derivedUsername.length >= 4 ? derivedUsername : `PT-${Math.floor(100000 + Math.random() * 900000)}`).toUpperCase();
+      const cleanCode = (rawUsername.length >= 4 ? rawUsername : `PT-${Math.floor(100000 + Math.random() * 900000)}`).toUpperCase();
       user.patientCode = cleanCode;
       await user.save();
 
@@ -130,6 +157,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
     user: {
       id: user.id,
       name: user.name,
+      username: user.username,
       email: user.email,
       role: user.role,
       patientCode: user.patientCode,

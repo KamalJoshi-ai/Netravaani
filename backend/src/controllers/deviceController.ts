@@ -186,11 +186,14 @@ export const assignDevice = async (req: Request, res: Response, next: NextFuncti
   try {
     const { deviceId } = req.params;
     const validated = assignDeviceSchema.parse(req.body);
+    const isNurse = (req as any).user?.role === "nurse";
+    const requireOnline = validated.requireOnline ?? (isNurse ? true : undefined);
     const assignment = await assignmentService.assignDevice({
       deviceId,
       patientCode: validated.patientCode,
       assignedBy: validated.assignedBy,
       reassign: validated.reassign,
+      requireOnline,
     });
     res.status(200).json({
       status: "success",

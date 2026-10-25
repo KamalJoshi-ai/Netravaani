@@ -1,6 +1,7 @@
 import { customAlphabet } from "nanoid";
 import jwt from "jsonwebtoken";
 import { Patient, IPatient, PatientStatus } from "../models/Patient.js";
+import { Bed } from "../models/Bed.js";
 import User from "../models/User.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
 import { CareRequest } from "../models/CareRequest.js";
@@ -73,17 +74,29 @@ export const PREDEFINED_COMMANDS = [
 export class PatientService {
   async createPatient(data: CreatePatientDto): Promise<IPatient> {
     const patientCode = `PT-${generatePatientId()}`;
+    const normBed = data.bedLabel ? data.bedLabel.trim().toUpperCase() : undefined;
+    const patientStatus = data.status || "ACTIVE";
+    const bedStatus = normBed && patientStatus === "ACTIVE" ? "OCCUPIED" : (normBed ? "PENDING_APPROVAL" : "NONE");
 
     const patient = await Patient.create({
       patientCode,
       displayName: data.displayName,
-      bedLabel: data.bedLabel || undefined,
-      status: data.status || "ACTIVE",
+      bedLabel: normBed,
+      bedStatus,
+      status: patientStatus,
       password: data.password || "patient123",
       nurseAssignment: {
         status: "NONE",
       },
     });
+
+    if (normBed && bedStatus === "OCCUPIED") {
+      await Bed.updateOne(
+        { bedNumber: normBed },
+        { $set: { status: "OCCUPIED", currentPatient: patient._id } },
+        { upsert: true }
+      );
+    }
 
     if (data.deviceId) {
       try {
@@ -92,7 +105,6 @@ export class PatientService {
           deviceId: data.deviceId,
           patientCode,
           assignedBy: "Clinical Intake",
-          reassign: true,
         });
       } catch (assignErr) {
         // Log or silently ignore if device assignment fails during initial registration
@@ -283,15 +295,17 @@ export class PatientService {
     };
   }
 
-  // Nurse Requests Assignment to Patient
+  // Nurse Requests Assignment to Patient (with optional entered Bed Number)
   async requestNurseAssignment(
     patientCode: string,
-    nurseData: { nurseId?: string; nurseName: string; nurseRole?: string }
+    nurseData: { nurseId?: string; nurseName: string; nurseRole?: string; bedNumber?: string; bedLabel?: string }
   ) {
     const patient = await Patient.findOne({ patientCode });
     if (!patient) {
       throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
     }
+
+    const proposedBed = (nurseData.bedNumber || nurseData.bedLabel || "").trim().toUpperCase();
 
     patient.nurseAssignment = {
       nurseId: (nurseData.nurseId as any) || undefined,
@@ -301,15 +315,60 @@ export class PatientService {
       status: "PENDING",
     };
 
+    if (proposedBed) {
+      // Ensure the bed exists and claim as pending approval if available
+      let bed = await Bed.findOne({ bedNumber: proposedBed });
+      if (!bed) {
+        bed = await Bed.create({ bedNumber: proposedBed, status: "AVAILABLE" });
+      }
+      if (bed.status === "OCCUPIED" && String(bed.currentPatient) !== String(patient._id)) {
+        throw new AppError(409, "BED_OCCUPIED", `Bed '${proposedBed}' is already occupied by another patient.`);
+      }
+
+      await Bed.updateOne(
+        { bedNumber: proposedBed },
+        {
+          $set: {
+            status: "PENDING_APPROVAL",
+            pendingPatient: patient._id,
+            assignedNurse: nurseData.nurseName,
+          },
+        }
+      );
+
+      patient.pendingBedLabel = proposedBed;
+      patient.bedStatus = "PENDING_APPROVAL";
+      patient.bedAssignedBy = nurseData.nurseName;
+      patient.bedProposedAt = new Date();
+    }
+
     await patient.save();
     return this.getPatientByCode(patientCode);
   }
 
-  // Patient Approves Nurse Request (with optional Bed Number)
-  async approveNurseAssignment(patientCode: string, bedLabel?: string) {
+  // Patient Approves Nurse Request (with optional Bed Number confirmation)
+  // STRICT RULE: ONLY PATIENT CAN APPROVE THE SEND CARE REQUEST LINK
+  async approveNurseAssignment(patientCode: string, bedLabel?: string, approvingUserIdentifier?: string) {
     const patient = await Patient.findOne({ patientCode });
     if (!patient) {
       throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    }
+
+    // Security check: ONLY patient can approve the send care request link
+    if (approvingUserIdentifier) {
+      const normIdent = approvingUserIdentifier.trim().toLowerCase();
+      const ptCodeNorm = patient.patientCode.toLowerCase();
+      const ptEmailNorm = (patient.email || "").toLowerCase();
+      const ptUserIdNorm = (patient.userId ? String(patient.userId) : "").toLowerCase();
+
+      const isMatch =
+        normIdent === ptCodeNorm ||
+        (ptEmailNorm && normIdent === ptEmailNorm) ||
+        (ptUserIdNorm && normIdent === ptUserIdNorm);
+
+      if (!isMatch) {
+        throw new AppError(403, "FORBIDDEN", "Only the patient can approve the send care request link.");
+      }
     }
 
     if (!patient.nurseAssignment || patient.nurseAssignment.status !== "PENDING") {
@@ -323,39 +382,58 @@ export class PatientService {
     patient.nurseAssignment.status = "APPROVED";
     patient.nurseAssignment.approvedAt = new Date();
 
-    if (bedLabel && typeof bedLabel === "string" && bedLabel.trim()) {
-      patient.bedLabel = bedLabel.trim();
+    const bedToConfirm = (bedLabel || patient.pendingBedLabel || "").trim().toUpperCase();
+    if (bedToConfirm) {
+      let bed = await Bed.findOne({ bedNumber: bedToConfirm });
+      if (!bed) {
+        bed = await Bed.create({ bedNumber: bedToConfirm, status: "AVAILABLE" });
+      }
+
+      // If patient was in an old bed, release it
+      const oldBedNum = patient.bedLabel;
+      if (oldBedNum && oldBedNum !== bedToConfirm) {
+        await Bed.updateOne(
+          { bedNumber: oldBedNum, currentPatient: patient._id },
+          { $set: { status: "AVAILABLE", currentPatient: null } }
+        );
+      }
+
+      // Mark confirmed bed as OCCUPIED
+      await Bed.updateOne(
+        { bedNumber: bedToConfirm },
+        {
+          $set: {
+            status: "OCCUPIED",
+            currentPatient: patient._id,
+            pendingPatient: null,
+            assignedNurse: patient.nurseAssignment.nurseName,
+          },
+        }
+      );
+
+      patient.bedLabel = bedToConfirm;
+      patient.pendingBedLabel = undefined;
+      patient.bedStatus = "OCCUPIED";
+      patient.status = "ACTIVE";
+      patient.bedApprovedAt = new Date();
     }
 
     await patient.save();
     return this.getPatientByCode(patientCode);
   }
 
-  // Nurse Directly Allocates Patient by Herself
+  // Nurse Initiates Allocation - Requires Patient Approval
   async allocateNurse(
     patientCode: string,
-    nurseData: { nurseId?: string; nurseName: string; nurseRole?: string; bedLabel?: string }
+    nurseData: { nurseId?: string; nurseName: string; nurseRole?: string; bedLabel?: string; bedNumber?: string }
   ) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
-    }
-
-    patient.nurseAssignment = {
-      nurseId: (nurseData.nurseId as any) || undefined,
+    // Direct approval without patient consent is disallowed: dispatch as pending request for patient bedside approval
+    return this.requestNurseAssignment(patientCode, {
+      nurseId: nurseData.nurseId,
       nurseName: nurseData.nurseName,
-      nurseRole: nurseData.nurseRole || "nurse",
-      requestedAt: new Date(),
-      approvedAt: new Date(),
-      status: "APPROVED",
-    };
-
-    if (nurseData.bedLabel && typeof nurseData.bedLabel === "string" && nurseData.bedLabel.trim()) {
-      patient.bedLabel = nurseData.bedLabel.trim();
-    }
-
-    await patient.save();
-    return this.getPatientByCode(patientCode);
+      nurseRole: nurseData.nurseRole,
+      bedNumber: nurseData.bedNumber || nurseData.bedLabel,
+    });
   }
 
   // Nurse Deallocates Patient by Herself
@@ -400,7 +478,16 @@ export class PatientService {
       throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
     }
 
-    // Find active assigned device
+    // Requirement 6: Check confirmed bed assignment
+    if (!patient.bedLabel || patient.bedStatus === "PENDING_APPROVAL" || patient.status === "PENDING_BED_APPROVAL") {
+      throw new AppError(
+        400,
+        "BED_NOT_CONFIRMED",
+        `Patient '${patientCode}' does not have a confirmed bed assignment. Bedside gaze and gesture commands cannot be activated until the bed assignment is confirmed.`
+      );
+    }
+
+    // Requirement 6: Find active assigned device
     const activeAssignment = await DeviceAssignment.findOne({
       patient: patient._id,
       isActive: true,
@@ -411,6 +498,15 @@ export class PatientService {
         400,
         "NO_ALLOCATED_DEVICE",
         `Patient '${patientCode}' does not have an active allocated device yet.`
+      );
+    }
+
+    const device = activeAssignment.device as any;
+    if (device.status === "DISABLED") {
+      throw new AppError(
+        400,
+        "DEVICE_DISABLED",
+        `Device '${device.deviceId}' is disabled and cannot transmit bedside commands.`
       );
     }
 

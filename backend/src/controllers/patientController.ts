@@ -114,11 +114,12 @@ export const getPatientMe = async (req: Request, res: Response, next: NextFuncti
 export const requestNurse = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { patientCode } = req.params;
-    const { nurseId, nurseName, nurseRole } = req.body;
+    const { nurseId, nurseName, nurseRole, bedNumber, bedLabel } = req.body;
     const updated = await patientService.requestNurseAssignment(patientCode, {
       nurseId,
       nurseName: nurseName || "Bedside Nurse Station",
       nurseRole,
+      bedNumber: bedNumber || bedLabel,
     });
     res.status(200).json({
       status: "success",
@@ -131,11 +132,19 @@ export const requestNurse = async (req: Request, res: Response, next: NextFuncti
 };
 
 // Patient Approves Nurse Request (with optional Bed Number)
+// STRICT: Only patient can approve the send care request link
 export const approveNurse = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { patientCode } = req.params;
     const { bedLabel } = req.body || {};
-    const updated = await patientService.approveNurseAssignment(patientCode, bedLabel);
+
+    const user = (req as any).user || (req as any).authUser;
+    if (user && user.role && user.role.toLowerCase() === "nurse") {
+      throw new AppError(403, "FORBIDDEN", "Nurses are not authorized to approve care requests. Only the patient can approve this request.");
+    }
+
+    const identifier = user?.patientCode || user?.email || user?._id?.toString() || req.body?.userIdentifier;
+    const updated = await patientService.approveNurseAssignment(patientCode, bedLabel, identifier);
     res.status(200).json({
       status: "success",
       message: "Nurse assignment request approved by patient",
@@ -146,20 +155,21 @@ export const approveNurse = async (req: Request, res: Response, next: NextFuncti
   }
 };
 
-// Nurse Directly Allocates Patient by Herself
+// Nurse Directly Allocates Patient by Herself (dispatches pending request for patient bedside approval)
 export const allocateNurse = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
     const { patientCode } = req.params;
-    const { nurseId, nurseName, nurseRole, bedLabel } = req.body || {};
+    const { nurseId, nurseName, nurseRole, bedLabel, bedNumber } = req.body || {};
     const updated = await patientService.allocateNurse(patientCode, {
       nurseId,
       nurseName: nurseName || "Staff Nurse",
       nurseRole: nurseRole || "nurse",
       bedLabel,
+      bedNumber,
     });
     res.status(200).json({
       status: "success",
-      message: `Patient ${patientCode} allocated successfully to nurse ${nurseName || "Staff Nurse"}`,
+      message: `Care link request dispatched to patient ${patientCode}. Awaiting patient bedside approval.`,
       data: updated,
     });
   } catch (err) {
@@ -232,8 +242,9 @@ export const allocateDeviceToPatient = async (req: Request, res: Response, next:
     const assignment = await assignmentService.assignDevice({
       deviceId,
       patientCode,
-      assignedBy,
+      assignedBy: assignedBy || "Nurse",
       reassign,
+      requireOnline: true,
     });
     res.status(200).json({
       status: "success",

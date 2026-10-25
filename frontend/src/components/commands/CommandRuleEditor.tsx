@@ -688,8 +688,8 @@ function RuleRow({
       onDrop={(e) => e.preventDefault()}
       className={`nv-rule-card relative overflow-visible rounded-2xl border p-3 shadow-subtle ${
         hasError
-          ? "border-[#FECDCA] bg-gradient-to-br from-[#FFFCF7] to-[#FEF3F2]"
-          : "border-[#E5D9CA] bg-gradient-to-br from-[#FFFCF7] to-[#FAF5F0]"
+          ? "border-[#FECDCA] bg-[#FEF3F2]"
+          : "border-[#E5D9CA] bg-[#FAF5F0]"
       } ${matched ? "nv-rule-match" : ""} ${dragging ? "opacity-60" : ""}`}
     >
       {(rule.alarm || rule.urgent) && (

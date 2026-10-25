@@ -11,6 +11,7 @@ import { patientRouter } from "./routes/patients.js";
 import { deviceEventRouter } from "./routes/deviceEvents.js";
 import { careRequestRouter } from "./routes/careRequests.js";
 import { authRouter } from "./routes/auth.js";
+import { bedRouter } from "./routes/beds.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 export function createApp(): Express {
@@ -44,6 +45,7 @@ export function createApp(): Express {
   app.use("/api/device-events", deviceEventRouter);
   app.use("/api/care-requests", careRequestRouter);
   app.use("/api/requests", careRequestRouter);
+  app.use("/api/beds", bedRouter);
 
   app.use("/api/v1/auth", authRouter);
   app.use("/api/v1/health", healthRouter);
@@ -52,6 +54,7 @@ export function createApp(): Express {
   app.use("/api/v1/device-events", deviceEventRouter);
   app.use("/api/v1/care-requests", careRequestRouter);
   app.use("/api/v1/requests", careRequestRouter);
+  app.use("/api/v1/beds", bedRouter);
 
   // Device Kit Network Info Discovery
   app.get(["/api/info", "/api/v1/info"], (_req, res) => {

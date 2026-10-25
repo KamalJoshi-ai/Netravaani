@@ -83,12 +83,38 @@ export interface WifiConnectResult {
   };
 }
 
+export interface BedItem {
+  _id: string;
+  bedNumber: string;
+  room?: string;
+  ward?: string;
+  status: "AVAILABLE" | "PENDING_APPROVAL" | "OCCUPIED";
+  currentPatient?: {
+    _id: string;
+    patientCode: string;
+    displayName: string;
+  } | null;
+  pendingPatient?: {
+    _id: string;
+    patientCode: string;
+    displayName: string;
+  } | null;
+  assignedNurse?: string;
+  updatedAt?: string;
+}
+
 export interface PatientItem {
   _id: string;
   patientCode: string;
   displayName: string;
   bedLabel?: string;
-  status: "ACTIVE" | "INACTIVE";
+  pendingBedLabel?: string;
+  bedStatus?: "NONE" | "PENDING_APPROVAL" | "OCCUPIED";
+  bedAssignedBy?: string;
+  bedProposedAt?: string;
+  bedApprovedAt?: string;
+  bedRejectedAt?: string;
+  status: "ACTIVE" | "INACTIVE" | "PENDING_BED_APPROVAL";
   createdAt: string;
   updatedAt: string;
   currentAssignment?: {
@@ -409,7 +435,7 @@ class ApiClient {
 
   async assignDevice(
     deviceId: string,
-    data: { patientCode: string; assignedBy?: string; reassign?: boolean }
+    data: { patientCode: string; assignedBy?: string; reassign?: boolean; requireOnline?: boolean }
   ): Promise<ApiResponse<DeviceAssignmentRecord>> {
     return this.request<ApiResponse<DeviceAssignmentRecord>>(`/devices/${deviceId}/assign`, {
       method: "POST",
@@ -618,7 +644,7 @@ class ApiClient {
     });
   }
 
-  async register(data: { name: string; email: string; password: string; role?: string }): Promise<ApiResponse<{ user: any }>> {
+  async register(data: { name: string; username?: string; email: string; password: string; role?: string }): Promise<ApiResponse<{ user: any }>> {
     return this.request<ApiResponse<{ user: any }>>("/auth/register", {
       method: "POST",
       body: JSON.stringify(data),
@@ -651,7 +677,7 @@ class ApiClient {
     return this.request<ApiResponse<PatientItem>>("/patients/me");
   }
 
-  async requestNurseAssignment(patientCode: string, nurseData: { nurseName: string; nurseId?: string; nurseRole?: string }): Promise<ApiResponse<PatientItem>> {
+  async requestNurseAssignment(patientCode: string, nurseData: { nurseName: string; nurseId?: string; nurseRole?: string; bedNumber?: string; bedLabel?: string }): Promise<ApiResponse<PatientItem>> {
     return this.request<ApiResponse<PatientItem>>(`/patients/${patientCode}/request-nurse`, {
       method: "POST",
       body: JSON.stringify(nurseData),
@@ -693,6 +719,44 @@ class ApiClient {
 
   async getPredefinedCommands(): Promise<ApiResponse<PredefinedCommandItem[]>> {
     return this.request<ApiResponse<PredefinedCommandItem[]>>("/patients/commands");
+  }
+
+  // Bed Management & Workflow
+  async listBeds(status?: string): Promise<ApiResponse<BedItem[]>> {
+    const q = status ? `?status=${encodeURIComponent(status)}` : "";
+    return this.request<ApiResponse<BedItem[]>>(`/beds${q}`);
+  }
+
+  async initiatePatientWithBed(data: {
+    displayName: string;
+    bedNumber: string;
+    patientCode?: string;
+    email?: string;
+    password?: string;
+  }): Promise<ApiResponse<{ patient: PatientItem; bed: BedItem }>> {
+    return this.request<ApiResponse<{ patient: PatientItem; bed: BedItem }>>("/beds/initiate-registration", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async proposeBedChange(patientCode: string, newBedNumber: string): Promise<ApiResponse<{ patient: PatientItem; bed: BedItem }>> {
+    return this.request<ApiResponse<{ patient: PatientItem; bed: BedItem }>>(`/patients/${patientCode}/propose-bed`, {
+      method: "POST",
+      body: JSON.stringify({ newBedNumber }),
+    });
+  }
+
+  async approveBedAssignment(patientCode: string): Promise<ApiResponse<{ patient: PatientItem }>> {
+    return this.request<ApiResponse<{ patient: PatientItem }>>(`/patients/${patientCode}/approve-bed`, {
+      method: "POST",
+    });
+  }
+
+  async rejectBedAssignment(patientCode: string): Promise<ApiResponse<{ patient: PatientItem }>> {
+    return this.request<ApiResponse<{ patient: PatientItem }>>(`/patients/${patientCode}/reject-bed`, {
+      method: "POST",
+    });
   }
 }
 

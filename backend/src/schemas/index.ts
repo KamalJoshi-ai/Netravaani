@@ -105,6 +105,7 @@ export const assignDeviceSchema = z.object({
   patientCode: z.string().trim().min(1, "patientCode is required"),
   assignedBy: z.string().trim().max(60).optional(),
   reassign: z.boolean().optional(),
+  requireOnline: z.boolean().optional(),
 });
 
 export const unassignDeviceSchema = z.object({

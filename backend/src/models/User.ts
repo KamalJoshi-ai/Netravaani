@@ -36,9 +36,11 @@ const UserSchema = new Schema<IUser>(
     },
     username: {
       type: String,
+      required: true,
+      unique: true,
       trim: true,
       lowercase: true,
-      sparse: true,
+      index: true,
     },
     password: {
       type: String,
@@ -84,6 +86,9 @@ const UserSchema = new Schema<IUser>(
 
 // Hash password prior to saving
 UserSchema.pre("save", async function (next) {
+  if (this.username) {
+    this.username = this.username.trim().toLowerCase();
+  }
   if (this.isModified("password") && this.password) {
     const salt = await bcrypt.genSalt(10);
     this.password = await bcrypt.hash(this.password, salt);

@@ -4,41 +4,36 @@ import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import {
   apiClient,
+  BedItem,
   CareRequestItem,
   CareRequestStatus,
   DeviceItem,
   PatientItem,
-  PredefinedCommandItem,
 } from "@/lib/api";
 import {
   Radio,
-  Wifi,
-  Cpu,
   Bed,
   CheckCircle2,
   AlertTriangle,
   Check,
   Search,
   ArrowRight,
-  ArrowUpRight,
-  Shield,
-  Activity,
   Bluetooth,
   RefreshCw,
   LogOut,
   User,
   X,
-  SlidersHorizontal,
   Link2,
   Unlink,
   Plus,
   Bell,
+  Shield,
 } from "@/lib/noIcons";
 import { useAuth } from "@/lib/auth";
+import { ThemeToggle } from "@/lib/theme";
 import LoginForm from "@/components/LoginForm";
 import BleCommissioningModal from "@/components/BleCommissioningModal";
-import CommandRuleEditor from "@/components/commands/CommandRuleEditor";
-import { announcementFor, speak, useVoiceAlerts } from "@/lib/speech";
+import { useVoiceAlerts } from "@/lib/speech";
 
 interface StepConfirmData {
   request: CareRequestItem;
@@ -49,84 +44,45 @@ interface StepConfirmData {
   actionButtonColor: string;
 }
 
-// 5 Predefined Clinical Firmware Commands (Hardware calibrated)
-const PREDEFINED_COMMANDS = [
-  {
-    action: "YES",
-    gesture: "2 blinks, wait",
-    serial: "[cmd] YES",
-    dashboard: "YES",
-    instruction: "Blink twice and pause to confirm affirmative / YES",
-  },
-  {
-    action: "WATER",
-    gesture: "4+ blinks",
-    serial: "[cmd] WATER",
-    dashboard: "WATER",
-    instruction: "Blink 4 or more rapid times to request drinking water",
-  },
-  {
-    action: "NO",
-    gesture: "Squeeze both hands together, once",
-    serial: "[cmd] NO",
-    dashboard: "NO",
-    instruction: "Squeeze both hands together once firmly to indicate negative / NO",
-  },
-  {
-    action: "CALL_NURSE",
-    gesture: "Squeeze left hand 3 times",
-    serial: "[cmd] CALL NURSE",
-    dashboard: "CALL NURSE",
-    instruction: "Squeeze left hand 3 times to summon bedside nurse",
-  },
-  {
-    action: "EMERGENCY",
-    gesture: "Squeeze both hands together, 3 times",
-    serial: "[cmd] EMERGENCY / SEVERE PAIN",
-    dashboard: "EMERGENCY, LEDs 1–4 flash red",
-    instruction: "Squeeze both hands together 3 times for acute clinical emergency",
-  },
-];
-
 export default function NurseDashboardPage() {
   const router = useRouter();
   const { user, loading: authLoading, logout } = useAuth();
   const [requests, setRequests] = useState<CareRequestItem[]>([]);
   const [devices, setDevices] = useState<DeviceItem[]>([]);
   const [patients, setPatients] = useState<PatientItem[]>([]);
-  const [, setCommandsList] = useState<PredefinedCommandItem[]>([]);
+  const [beds, setBeds] = useState<BedItem[]>([]);
   const [, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [activeTab, setActiveTab] = useState<"overview" | "calls" | "patients" | "devices" | "history">("overview");
   const [filter, setFilter] = useState<"ALL" | CareRequestStatus>("ALL");
   const [searchQuery, setSearchQuery] = useState("");
   const [isBleModalOpen, setIsBleModalOpen] = useState(false);
-  const [selectedDeviceDetails, setSelectedDeviceDetails] = useState<DeviceItem | null>(null);
-  const [deviceDetailsTab, setDeviceDetailsTab] = useState<"overview" | "commands">("overview");
   const voice = useVoiceAlerts(requests);
 
-  // Device Allocation state
+  // Device Allocation state (Strict 1-to-1 without manual entry or silent switch)
   const [allocateModalPatient, setAllocateModalPatient] = useState<PatientItem | null>(null);
-  const [allocateModalDevice, setAllocateModalDevice] = useState<DeviceItem | null>(null);
   const [selectedAllocateDeviceId, setSelectedAllocateDeviceId] = useState<string>("");
-  const [selectedAllocatePatientCode, setSelectedAllocatePatientCode] = useState<string>("");
-  const [deviceSearchQuery, setDeviceSearchQuery] = useState("");
-  const [manualDeviceId, setManualDeviceId] = useState("");
-  const [showManualDeviceInput, setShowManualDeviceInput] = useState(false);
-  const [forceReassign, setForceReassign] = useState(true);
   const [allocatingDevice, setAllocatingDevice] = useState(false);
   const [deviceDeallocatingMap, setDeviceDeallocatingMap] = useState<Record<string, boolean>>({});
 
-  // Add Patient Modal State
+  // Add Patient Modal State (Nurse-controlled registration requiring available bed)
   const [isAddPatientModalOpen, setIsAddPatientModalOpen] = useState(false);
   const [newPatientName, setNewPatientName] = useState("");
-  const [newPatientBed, setNewPatientBed] = useState("");
-  const [newPatientParticularDevice, setNewPatientParticularDevice] = useState("");
+  const [newPatientBedNumber, setNewPatientBedNumber] = useState("");
   const [creatingPatient, setCreatingPatient] = useState(false);
 
-  // In-place confirmation dialog state (does NOT jump to top of page)
+  // Propose Bed Change Modal State
+  const [isBedChangeModalOpen, setIsBedChangeModalOpen] = useState(false);
+  const [bedChangePatient, setBedChangePatient] = useState<PatientItem | null>(null);
+  const [selectedNewBedNumber, setSelectedNewBedNumber] = useState("");
+  const [proposingBed, setProposingBed] = useState(false);
+
+  // Care Link Request Modal State (Enter Bed Number + Patient-only Approval)
+  const [careLinkModalPatient, setCareLinkModalPatient] = useState<PatientItem | null>(null);
+  const [careLinkBedNumber, setCareLinkBedNumber] = useState("");
+
+  // In-place confirmation dialog state
   const [stepConfirm, setStepConfirm] = useState<StepConfirmData | null>(null);
-  const [actionLoadingMap, setActionLoadingMap] = useState<Record<string, boolean>>({});
   const [nurseAssignLoading, setNurseAssignLoading] = useState<Record<string, boolean>>({});
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [toastIsError, setToastIsError] = useState(false);
@@ -145,7 +101,7 @@ export default function NurseDashboardPage() {
     if (showIndicator) setRefreshing(true);
     try {
       const res = await apiClient.getCareRequests({ limit: 100 });
-      if (res.data) {
+      if (res?.data) {
         setRequests(res.data);
       }
     } catch (err: unknown) {
@@ -155,22 +111,20 @@ export default function NurseDashboardPage() {
     }
   }, []);
 
-  // Fetch Patients, Devices, Commands (Filtered strictly to current nurse's registered devices)
+  // Fetch Patients, Devices, Beds
   const fetchAuxData = useCallback(async () => {
     try {
       const currentNurse = (user?.email || user?.username || user?.name || "").trim();
-      const [ptsRes, devsRes, cmdsRes] = await Promise.allSettled([
-        apiClient.getPatients({ limit: 50 }),
-        apiClient.getDevices({ limit: 50, registeredBy: currentNurse || undefined }),
-        apiClient.getPredefinedCommands(),
+      const [ptsRes, devsRes, bedsRes] = await Promise.allSettled([
+        apiClient.getPatients({ limit: 100 }),
+        apiClient.getDevices({ limit: 100, registeredBy: currentNurse || undefined }),
+        apiClient.listBeds(),
       ]);
 
-      if (ptsRes.status === "fulfilled" && ptsRes.value.data) {
+      if (ptsRes.status === "fulfilled" && ptsRes.value?.data) {
         setPatients(ptsRes.value.data);
       }
-      if (devsRes.status === "fulfilled" && devsRes.value.data) {
-        // Multi-tenant nurse device isolation:
-        // A device registered by nurse A MUST NOT appear for nurse B.
+      if (devsRes.status === "fulfilled" && devsRes.value?.data) {
         const visibleDevices = currentNurse
           ? devsRes.value.data.filter(
               (d) =>
@@ -184,11 +138,11 @@ export default function NurseDashboardPage() {
           : devsRes.value.data;
         setDevices(visibleDevices);
       }
-      if (cmdsRes.status === "fulfilled" && cmdsRes.value.data) {
-        setCommandsList(cmdsRes.value.data);
+      if (bedsRes.status === "fulfilled" && bedsRes.value?.data) {
+        setBeds(bedsRes.value.data);
       }
     } catch (err) {
-      console.error("Failed to fetch aux clinical data:", err);
+      console.error("Failed to fetch clinical state:", err);
     } finally {
       setLoading(false);
     }
@@ -197,119 +151,194 @@ export default function NurseDashboardPage() {
   useEffect(() => {
     fetchRequests(false);
     fetchAuxData();
-
-    // Silent background telemetry polling every 3s without jumping viewport
     const interval = setInterval(() => {
       fetchRequests(false);
       fetchAuxData();
-    }, 3000);
-
+    }, 3500);
     return () => clearInterval(interval);
   }, [fetchRequests, fetchAuxData]);
 
-  // Open the in-place confirmation dialog for a specific step
-  const promptStepConfirmation = (
-    req: CareRequestItem,
-    nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED"
-  ) => {
-    const patientDisplay = req.patient?.displayName || "Bedside Patient";
-    const bedDisplay = req.patient?.bedLabel || "Bed Unassigned";
+  // Available beds for registration and bed change
+  const availableBeds = useMemo(() => {
+    return beds.filter((b) => b.status === "AVAILABLE");
+  }, [beds]);
 
-    if (nextStep === "ACKNOWLEDGED") {
-      setStepConfirm({
-        request: req,
-        nextStep: "ACKNOWLEDGED",
-        stepTitle: "Confirm Acknowledgment",
-        stepDescription: `Acknowledge bedside alert from ${patientDisplay} (${bedDisplay})? This confirms to the station that nursing staff is attending.`,
-        actionButtonLabel: "Acknowledge Call",
-        actionButtonColor: "bg-[#AD5D3D] hover:bg-[#964F33] text-white",
-      });
-    } else if (nextStep === "IN_PROGRESS") {
-      setStepConfirm({
-        request: req,
-        nextStep: "IN_PROGRESS",
-        stepTitle: "Confirm: In-Progress Response",
-        stepDescription: `Mark call as In-Progress for ${patientDisplay} (${bedDisplay})? This records your bedside intervention.`,
-        actionButtonLabel: "Start Handling",
-        actionButtonColor: "bg-[#2B6CB0] hover:bg-[#23588F] text-white",
-      });
-    } else if (nextStep === "RESOLVED") {
-      setStepConfirm({
-        request: req,
-        nextStep: "RESOLVED",
-        stepTitle: "Confirm: Complete & Resolve",
-        stepDescription: `Mark this care event as Resolved for ${patientDisplay} (${bedDisplay})? This closes the telemetry event.`,
-        actionButtonLabel: "Resolve Call",
-        actionButtonColor: "bg-[#42765A] hover:bg-[#355F49] text-white",
-      });
+  // Open modal targeting patient to allocate an available device
+  const handleOpenAllocateToPatient = (patient: PatientItem) => {
+    if (patient.currentAssignment?.device) {
+      showToast(
+        `Patient ${patient.displayName} already has device ${patient.currentAssignment.device.deviceId} allocated. Unassign the current device before allocating a new one.`,
+        true
+      );
+      return;
     }
+    setAllocateModalPatient(patient);
+    const availableOnlineDevice = devices.find(
+      (d) =>
+        d.status === "AVAILABLE" &&
+        !d.currentAssignment &&
+        d.connectivityStatus === "ONLINE"
+    );
+    setSelectedAllocateDeviceId(availableOnlineDevice?.deviceId || "");
   };
 
-  // Execute confirmation in-place WITHOUT jumping to top of page
-  const handleConfirmNextStep = async () => {
-    if (!stepConfirm) return;
-    const { request, nextStep } = stepConfirm;
-    const reqId = request._id;
+  const handleCloseAllocateModal = () => {
+    setAllocateModalPatient(null);
+    setSelectedAllocateDeviceId("");
+  };
 
-    // Capture exact viewport scroll position so the user stays right there
-    const savedScrollY = typeof window !== "undefined" ? window.scrollY : 0;
-    setActionLoadingMap((prev) => ({ ...prev, [reqId]: true }));
+  // Submit device allocation
+  const handleConfirmAllocateDevice = async () => {
+    if (!allocateModalPatient || !selectedAllocateDeviceId) {
+      showToast("Please select an available online device.", true);
+      return;
+    }
+    const targetDev = devices.find(
+      (d) => d.deviceId.toLowerCase() === selectedAllocateDeviceId.toLowerCase()
+    );
+    if (!targetDev) {
+      showToast("Selected device not found in registry.", true);
+      return;
+    }
+    if (targetDev.status === "ASSIGNED" || targetDev.currentAssignment) {
+      showToast("Device is already assigned to another patient.", true);
+      return;
+    }
+    if (targetDev.connectivityStatus !== "ONLINE") {
+      showToast("Device is offline. Gateway must be online before allocation.", true);
+      return;
+    }
 
+    setAllocatingDevice(true);
     try {
-      let updatedRes: CareRequestItem | undefined;
-      if (nextStep === "ACKNOWLEDGED") {
-        const res = await apiClient.acknowledgeCareRequest(reqId);
-        updatedRes = res.data;
-        showToast(`Request acknowledged for ${request.patient?.displayName || "Patient"}.`);
-      } else if (nextStep === "IN_PROGRESS") {
-        const res = await apiClient.startHandlingCareRequest(reqId);
-        updatedRes = res.data;
-        showToast(`Moved to In-Progress for ${request.patient?.displayName || "Patient"}.`);
-      } else if (nextStep === "RESOLVED") {
-        const res = await apiClient.resolveCareRequest(reqId);
-        updatedRes = res.data;
-        showToast(`Request marked as Resolved for ${request.patient?.displayName || "Patient"}.`);
-      }
-
-      if (updatedRes) {
-        setRequests((prev) => prev.map((r) => (r._id === reqId ? updatedRes! : r)));
-      }
-
-      setStepConfirm(null);
-
-      // Restore scroll position instantly
-      if (typeof window !== "undefined") {
-        requestAnimationFrame(() => {
-          window.scrollTo({ top: savedScrollY, behavior: "instant" });
-        });
-      }
+      await apiClient.allocateDeviceToPatient(
+        allocateModalPatient.patientCode,
+        targetDev.deviceId,
+        user?.name || user?.email || "Staff Nurse"
+      );
+      showToast(`Device ${targetDev.deviceId} allocated to ${allocateModalPatient.displayName} successfully!`);
+      handleCloseAllocateModal();
+      await fetchAuxData();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to execute clinical step", true);
+      showToast(err instanceof Error ? err.message : "Failed to assign device", true);
     } finally {
-      setActionLoadingMap((prev) => ({ ...prev, [reqId]: false }));
+      setAllocatingDevice(false);
     }
   };
 
-  // Nurse Assignment Request
-  const handleRequestPatientAssignment = async (patientCode: string) => {
-    setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
+  // Deallocate device
+  const handleDeallocateDevice = async (deviceId: string, patientNameOrCode?: string) => {
+    setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: true }));
     try {
-      await apiClient.requestNurseAssignment(patientCode, {
-        nurseName: user?.name || "Staff Nurse",
-        nurseId: user?.email || user?.name || "nurse-station",
-        nurseRole: user?.role || "NURSE",
+      await apiClient.unassignDevice(deviceId);
+      showToast(`Device ${deviceId} unassigned from ${patientNameOrCode || "patient"} successfully.`);
+      await fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to unassign device", true);
+    } finally {
+      setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: false }));
+    }
+  };
+
+  // Initiate Patient Registration with Selected Bed
+  const handleInitiatePatientRegistration = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newPatientName.trim()) {
+      showToast("Please enter patient full name.", true);
+      return;
+    }
+    if (!newPatientBedNumber.trim()) {
+      showToast("Please select an available hospital bed.", true);
+      return;
+    }
+
+    setCreatingPatient(true);
+    try {
+      const res = await apiClient.initiatePatientWithBed({
+        displayName: newPatientName.trim(),
+        bedNumber: newPatientBedNumber.trim(),
       });
-      showToast(`Assignment requested for patient ${patientCode}. Awaiting bedside screen approval.`);
+      if (res?.data) {
+        showToast(
+          `Registration initiated for ${res.data.patient.displayName}! Bed ${newPatientBedNumber} marked pending patient approval.`
+        );
+      }
+      setIsAddPatientModalOpen(false);
+      setNewPatientName("");
+      setNewPatientBedNumber("");
+      await fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to initiate patient registration", true);
+    } finally {
+      setCreatingPatient(false);
+    }
+  };
+
+  // Open Bed Change Modal
+  const handleOpenBedChangeModal = (pt: PatientItem) => {
+    setBedChangePatient(pt);
+    setSelectedNewBedNumber("");
+    setIsBedChangeModalOpen(true);
+  };
+
+  // Submit Bed Change Proposal
+  const handleConfirmProposeBedChange = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!bedChangePatient || !selectedNewBedNumber) {
+      showToast("Please select a new available bed to propose.", true);
+      return;
+    }
+    setProposingBed(true);
+    try {
+      await apiClient.proposeBedChange(bedChangePatient.patientCode, selectedNewBedNumber);
+      showToast(
+        `Proposed Bed ${selectedNewBedNumber} for ${bedChangePatient.displayName}. Existing bed retained until patient approves.`
+      );
+      setIsBedChangeModalOpen(false);
+      setBedChangePatient(null);
+      setSelectedNewBedNumber("");
+      await fetchAuxData();
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Failed to propose bed change", true);
+    } finally {
+      setProposingBed(false);
+    }
+  };
+
+  // Open Care Link Request Modal so nurse can enter/verify bed number
+  const handleOpenCareLinkModal = (pt: PatientItem) => {
+    setCareLinkModalPatient(pt);
+    setCareLinkBedNumber(pt.pendingBedLabel || pt.bedLabel || "");
+  };
+
+  // Submit Care Link Request with entered bed number (Only patient can approve)
+  const handleConfirmSendCareLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!careLinkModalPatient || !careLinkBedNumber.trim()) {
+      showToast("Please enter a valid bed number", true);
+      return;
+    }
+    const ptCode = careLinkModalPatient.patientCode;
+    const bed = careLinkBedNumber.trim().toUpperCase();
+    setNurseAssignLoading((prev) => ({ ...prev, [ptCode]: true }));
+    try {
+      await apiClient.requestNurseAssignment(ptCode, {
+        nurseName: user?.name || "Staff Nurse",
+        nurseId: user?.id,
+        nurseRole: user?.role || "NURSE",
+        bedNumber: bed,
+      });
+      showToast(`Care link request for Bed ${bed} dispatched to ${careLinkModalPatient.displayName}. Only the patient can approve it.`);
+      setCareLinkModalPatient(null);
       fetchAuxData();
     } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to request patient link", true);
+      showToast(err instanceof Error ? err.message : "Failed to send care link request", true);
     } finally {
-      setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: false }));
+      setNurseAssignLoading((prev) => ({ ...prev, [ptCode]: false }));
     }
   };
 
 
-  // Nurse Deallocate Patient
   const handleDeallocatePatient = async (patientCode: string) => {
     setNurseAssignLoading((prev) => ({ ...prev, [patientCode]: true }));
     try {
@@ -323,209 +352,86 @@ export default function NurseDashboardPage() {
     }
   };
 
-  // Patients without active device assignment
-  const unassignedPatients = useMemo(() => {
-    return patients.filter((p) => !p.currentAssignment?.device);
-  }, [patients]);
-  const filteredDevicesForModal = useMemo(() => {
-    const query = deviceSearchQuery.trim().toLowerCase();
-    if (!query) return devices;
-    return devices.filter(
-      (d) =>
-        d.deviceId.toLowerCase().includes(query) ||
-        (d.name && d.name.toLowerCase().includes(query)) ||
-        (d.hardwareId && d.hardwareId.toLowerCase().includes(query))
-    );
-  }, [devices, deviceSearchQuery]);
+  // Step advancement confirmation
+  const promptStepConfirmation = (
+    req: CareRequestItem,
+    nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED"
+  ) => {
+    const pName = req.patient?.displayName || req.patient?.patientCode || "Patient";
+    const pBed = req.patient?.bedLabel || "Bed";
+    const act = req.displayLabel || req.label || req.action.replace(/_/g, " ");
 
-  // Open modal targeting a specific patient to select an available device
-  const handleOpenAllocateToPatient = (patient: PatientItem) => {
-    setAllocateModalPatient(patient);
-    setAllocateModalDevice(null);
-    setSelectedAllocatePatientCode(patient.patientCode);
-    setDeviceSearchQuery("");
-    setManualDeviceId("");
-    setShowManualDeviceInput(false);
-    setForceReassign(true);
-    const initialDevId =
-      patient.currentAssignment?.device?.deviceId ||
-      devices.find((d) => d.status !== "DISABLED" && (!d.currentAssignment || d.status === "AVAILABLE"))?.deviceId ||
-      devices[0]?.deviceId ||
-      "";
-    setSelectedAllocateDeviceId(initialDevId);
-  };
-
-  // Open modal targeting a specific device to select an unassigned patient
-  const handleOpenAllocateDeviceToPatient = (device: DeviceItem) => {
-    setAllocateModalDevice(device);
-    setAllocateModalPatient(null);
-    setSelectedAllocateDeviceId(device.deviceId);
-    setDeviceSearchQuery("");
-    setManualDeviceId("");
-    setShowManualDeviceInput(false);
-    setForceReassign(true);
-    const firstUnassignedPt = patients.find((p) => !p.currentAssignment?.device) || patients[0];
-    setSelectedAllocatePatientCode(firstUnassignedPt?.patientCode || "");
-  };
-
-  const handleCloseAllocateModal = () => {
-    setAllocateModalPatient(null);
-    setAllocateModalDevice(null);
-    setSelectedAllocateDeviceId("");
-    setSelectedAllocatePatientCode("");
-    setDeviceSearchQuery("");
-    setManualDeviceId("");
-    setShowManualDeviceInput(false);
-  };
-
-  // Submit device allocation to assign patient with a particular device
-  const handleConfirmAllocateDevice = async () => {
-    const targetDevId = (manualDeviceId.trim() || selectedAllocateDeviceId || "").trim();
-    if (!targetDevId || !selectedAllocatePatientCode) {
-      showToast("Please specify both a particular device and a patient to assign.", true);
-      return;
-    }
-    setAllocatingDevice(true);
-    try {
-      await apiClient.assignDevice(targetDevId, {
-        patientCode: selectedAllocatePatientCode,
-        assignedBy: user?.name || user?.email || "Staff Nurse",
-        reassign: forceReassign,
+    if (nextStep === "ACKNOWLEDGED") {
+      setStepConfirm({
+        request: req,
+        nextStep: "ACKNOWLEDGED",
+        stepTitle: "Acknowledge Care Request",
+        stepDescription: `Acknowledge ${act} call from ${pName} on ${pBed}?`,
+        actionButtonLabel: "Confirm Acknowledge",
+        actionButtonColor: "bg-[#2563EB] hover:bg-[#1D4ED8]",
       });
-      showToast(`Particular device ${targetDevId} assigned to patient ${selectedAllocatePatientCode} successfully!`);
-      handleCloseAllocateModal();
-      await fetchAuxData();
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to assign device to patient", true);
-    } finally {
-      setAllocatingDevice(false);
-    }
-  };
-
-  // Deallocate device
-  const handleDeallocateDevice = async (deviceId: string, patientNameOrCode?: string) => {
-    setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: true }));
-    try {
-      await apiClient.unassignDevice(deviceId);
-      showToast(`Device ${deviceId} unassigned from ${patientNameOrCode || "patient"} successfully.`);
-      await fetchAuxData();
-      if (selectedDeviceDetails && selectedDeviceDetails.deviceId === deviceId) {
-        setSelectedDeviceDetails(null);
-      }
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to unassign device", true);
-    } finally {
-      setDeviceDeallocatingMap((prev) => ({ ...prev, [deviceId]: false }));
-    }
-  };
-
-  // Register a new patient and optionally assign a particular device immediately
-  const handleCreatePatientWithDevice = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newPatientName.trim()) {
-      showToast("Please enter patient display name.", true);
-      return;
-    }
-    setCreatingPatient(true);
-    try {
-      const res = await apiClient.createPatient({
-        displayName: newPatientName.trim(),
-        bedLabel: newPatientBed.trim() || undefined,
-        deviceId: newPatientParticularDevice.trim() || undefined,
+    } else if (nextStep === "IN_PROGRESS") {
+      setStepConfirm({
+        request: req,
+        nextStep: "IN_PROGRESS",
+        stepTitle: "Start Handling Request",
+        stepDescription: `Are you en route or currently assisting ${pName} on ${pBed}?`,
+        actionButtonLabel: "Start Handling",
+        actionButtonColor: "bg-[#2563EB] hover:bg-[#1D4ED8]",
       });
-      if (res.data) {
-        showToast(
-          `Patient ${res.data.displayName} (${res.data.patientCode}) registered${
-            newPatientParticularDevice ? ` & assigned with device ${newPatientParticularDevice}` : ""
-          } successfully!`
-        );
-      }
-      setIsAddPatientModalOpen(false);
-      setNewPatientName("");
-      setNewPatientBed("");
-      setNewPatientParticularDevice("");
-      await fetchAuxData();
-    } catch (err: unknown) {
-      showToast(err instanceof Error ? err.message : "Failed to register patient", true);
-    } finally {
-      setCreatingPatient(false);
+    } else if (nextStep === "RESOLVED") {
+      setStepConfirm({
+        request: req,
+        nextStep: "RESOLVED",
+        stepTitle: "Mark Request Resolved",
+        stepDescription: `Confirm care for ${act} has been completed for ${pName} on ${pBed}?`,
+        actionButtonLabel: "Complete & Resolve",
+        actionButtonColor: "bg-[#059669] hover:bg-[#047857]",
+      });
     }
   };
 
-  // Metrics computation (100% REAL from database, zero preserved fake values)
-  const urgentCallsCount = useMemo(() => {
-    return requests.filter(
-      (r) =>
-        (r.status === "NEW" || r.status === "ACKNOWLEDGED") &&
-        (Boolean(r.urgent) || r.action === "EMERGENCY")
-    ).length;
-  }, [requests]);
-
-  const awaitingResponseCount = useMemo(() => {
-    return requests.filter((r) => r.status === "NEW").length;
-  }, [requests]);
-
-  const inProgressCount = useMemo(() => {
-    return requests.filter((r) => r.status === "IN_PROGRESS").length;
-  }, [requests]);
-
-  const resolvedTodayCount = useMemo(() => {
-    return requests.filter((r) => r.status === "RESOLVED").length;
-  }, [requests]);
-
-  const totalEventsCount = requests.length;
-
-  // Real connected devices ratio
-  const connectedDevicesCount = useMemo(() => {
-    return devices.filter((d) => d.connectivityStatus === "ONLINE" || d.status === "AVAILABLE" || d.status === "ASSIGNED").length;
-  }, [devices]);
-
-  const unassignedDevicesCount = useMemo(() => {
-    return devices.filter((d) => d.status === "AVAILABLE" && !d.currentAssignment).length;
-  }, [devices]);
+  const executeStepConfirmation = async () => {
+    if (!stepConfirm) return;
+    const { request, nextStep } = stepConfirm;
+    setStepConfirm(null);
+    try {
+      if (nextStep === "ACKNOWLEDGED") {
+        await apiClient.acknowledgeCareRequest(request._id);
+        showToast("Request acknowledged.");
+      } else if (nextStep === "IN_PROGRESS") {
+        await apiClient.startHandlingCareRequest(request._id);
+        showToast("Request marked In Progress.");
+      } else if (nextStep === "RESOLVED") {
+        await apiClient.resolveCareRequest(request._id);
+        showToast("Request resolved and closed.");
+      }
+      await fetchRequests(false);
+    } catch (err: unknown) {
+      showToast(err instanceof Error ? err.message : "Action failed", true);
+    }
+  };
 
   // Filtered requests for the Live Calls tab
   const filteredRequests = useMemo(() => {
-    return requests.filter((req) => {
-      if (filter !== "ALL" && req.status !== filter) return false;
-      if (!searchQuery.trim()) return true;
-      const q = searchQuery.toLowerCase();
-      const pName = req.patient?.displayName?.toLowerCase() || "";
-      const pBed = req.patient?.bedLabel?.toLowerCase() || "";
-      const pCode = req.patient?.patientCode?.toLowerCase() || "";
-      const pAction = req.action?.toLowerCase() || "";
-      const pLabel = `${req.displayLabel || ""} ${req.label || ""}`.toLowerCase();
-      return pName.includes(q) || pBed.includes(q) || pCode.includes(q) || pAction.includes(q) || pLabel.includes(q);
-    }).sort((a, b) => {
-      const openAlarm = (r: CareRequestItem) => Boolean(r.alarm) && r.status !== "RESOLVED";
-      return openAlarm(a) === openAlarm(b) ? 0 : openAlarm(a) ? -1 : 1;
-    });
+    return requests
+      .filter((req) => {
+        if (filter !== "ALL" && req.status !== filter) return false;
+        if (!searchQuery.trim()) return true;
+        const q = searchQuery.toLowerCase();
+        const pName = req.patient?.displayName?.toLowerCase() || "";
+        const pBed = req.patient?.bedLabel?.toLowerCase() || "";
+        const pCode = req.patient?.patientCode?.toLowerCase() || "";
+        const pAction = req.action?.toLowerCase() || "";
+        return pName.includes(q) || pBed.includes(q) || pCode.includes(q) || pAction.includes(q);
+      })
+      .sort((a, b) => {
+        const openAlarm = (r: CareRequestItem) => Boolean(r.alarm) && r.status !== "RESOLVED";
+        return openAlarm(a) === openAlarm(b) ? 0 : openAlarm(a) ? -1 : 1;
+      });
   }, [requests, filter, searchQuery]);
 
-  // Request name for the nurse: the rule's dashboard name, else its device label, else the legacy action
-  const requestLabel = (req: CareRequestItem) =>
-    req.displayLabel || req.label || req.action.replace(/_/g, " ");
-
-  // Format relative elapsed time
-  const formatElapsedTime = (dateString?: string) => {
-    if (!dateString) return "just now";
-    const diff = Math.floor((Date.now() - new Date(dateString).getTime()) / 1000);
-    if (diff < 5) return "just now";
-    if (diff < 60) return `${diff} sec ago`;
-    const mins = Math.floor(diff / 60);
-    if (mins < 60) return `${mins} min${mins > 1 ? "s" : ""} ago`;
-    const hours = Math.floor(mins / 60);
-    return `${hours} hr${hours > 1 ? "s" : ""} ago`;
-  };
-
-  // Format clock time (e.g. 14:32)
-  const formatTimeOnly = (dateString?: string) => {
-    if (!dateString) return "--:--";
-    const d = new Date(dateString);
-    return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
-  };
-
-  // Redirect patient away from nurse station - patients only see their own dashboard
+  // Redirect patient away from nurse station
   useEffect(() => {
     if (!authLoading && user && user.role === "patient") {
       router.push("/");
@@ -534,10 +440,10 @@ export default function NurseDashboardPage() {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen bg-[#F5F1E9] flex items-center justify-center p-6 text-[#211C19]">
-        <div className="flex items-center gap-3 bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl px-5 py-3 shadow-subtle">
-          <RefreshCw className="w-5 h-5 text-[#AD5D3D] animate-spin" />
-          <span className="text-sm font-semibold font-sans">Connecting to NetraVaani Clinical Command Center...</span>
+      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-6 text-[#0F172A]">
+        <div className="flex items-center gap-3 bg-white border border-[#E2E8F0] rounded-xl px-5 py-3 shadow-md">
+          <RefreshCw className="w-5 h-5 text-[#059669] animate-spin" />
+          <span className="text-sm font-semibold font-sans text-[#0F172A]">Connecting to Nurse Station...</span>
         </div>
       </div>
     );
@@ -551,16 +457,21 @@ export default function NurseDashboardPage() {
     return null;
   }
 
+  const occupiedBedsCount = beds.filter((b) => b.status === "OCCUPIED").length;
+  const pendingBedsCount = beds.filter((b) => b.status === "PENDING_APPROVAL").length;
+  const availableBedsCount = beds.filter((b) => b.status === "AVAILABLE").length;
+  const onlineDevicesCount = devices.filter((d) => d.connectivityStatus === "ONLINE").length;
+
   return (
-    <div className="min-h-screen bg-[#F5F1E9] text-[#211C19] font-sans antialiased selection:bg-[#AD5D3D]/20 selection:text-[#211C19]">
+    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] font-sans antialiased transition-colors duration-150">
       {/* Toast Alert Banner */}
       {toastMessage && (
-        <div className="fixed top-4 right-4 z-50 animate-in fade-in slide-in-from-top-2 duration-200">
+        <div className="fixed top-4 right-4 z-50 animate-in fade-in duration-200">
           <div
-            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-xs font-semibold shadow-card ${
+            className={`flex items-center gap-2.5 px-4 py-2.5 rounded-xl border text-xs font-semibold shadow-md ${
               toastIsError
-                ? "bg-[#FEF3F2] border-[#FECDCA] text-[#B42318]"
-                : "bg-[#EDF5F0] border-[#C5DDCF] text-[#42765A]"
+                ? "bg-[#FEF2F2] dark:bg-[#450A0A] border-[#FCA5A5] dark:border-[#991B1B] text-[#B91C1C] dark:text-[#FCA5A5]"
+                : "bg-[#ECFDF5] dark:bg-[#064E3B] border-[#A7F3D0] dark:border-[#059669] text-[#047857] dark:text-[#A7F3D0]"
             }`}
           >
             {toastIsError ? <AlertTriangle className="w-4 h-4 shrink-0" /> : <CheckCircle2 className="w-4 h-4 shrink-0" />}
@@ -569,116 +480,91 @@ export default function NurseDashboardPage() {
         </div>
       )}
 
-      {/* Main Container - 1440px desktop viewport target */}
+      {/* Main Container */}
       <div className="max-w-[1440px] mx-auto px-4 sm:px-6 lg:px-8 py-5">
         
-        {/* TOP NAVIGATION BAR */}
-        <header className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl shadow-subtle p-3.5 sm:p-4 mb-6">
+        {/* TOP NAVIGATION BAR - Light, Crisp, Solid Accents */}
+        <header className="bg-white dark:bg-[#131B2E] border border-[#E2E8F0] dark:border-[#1E293B] rounded-xl p-3.5 sm:p-4 mb-6 shadow-xs">
           <div className="flex items-center justify-between gap-4 flex-wrap">
             
-            {/* Brand Logo & Clinical Command Center */}
+            {/* Brand Logo & Prominent NURSE Role Label */}
             <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-[#211C19] flex items-center justify-center shrink-0 shadow-xs">
-                <span className="font-heading font-extrabold text-sm text-[#FFFCF7] tracking-wider">
-                  NV
-                </span>
+              <div className="w-10 h-10 rounded-xl bg-[#059669] text-white flex items-center justify-center shrink-0 font-extrabold text-sm tracking-wider shadow-xs">
+                NV
               </div>
               <div>
-                <div className="flex items-center gap-2">
-                  <span className="font-wordmark font-bold text-xl sm:text-2xl text-[#211C19] tracking-tight leading-none">
-                    NetraVaani
+                <div className="flex items-center gap-2.5">
+                  <span className="font-bold text-xl sm:text-2xl text-[#0F172A] dark:text-[#F8FAFC] tracking-tight leading-none">
+                    Nurse Dashboard
+                  </span>
+                  {/* Explicit Role Identifier */}
+                  <span className="px-2.5 py-0.5 rounded-md font-bold text-xs bg-[#059669] text-white tracking-wider uppercase shadow-xs">
+                    NURSE
                   </span>
                 </div>
-                <div className="text-[11px] font-medium text-[#76685F] mt-0.5 tracking-wide">
-                  {activeTab === "devices"
-                    ? "Assistive Gaze & Gesture Clinical Platform"
-                    : "Clinical Command Center"}
+                <div className="text-xs text-[#64748B] dark:text-[#94A3B8] mt-1 font-medium">
+                  Clinical Station Desk &bull; Logged in as <strong className="text-[#0F172A] dark:text-[#F8FAFC]">{user.name}</strong>
+                  {user.username && <span> (@{user.username})</span>}
                 </div>
               </div>
             </div>
 
-            {/* Right Controls: Telemetry indicator, Bedside Portal, Refresh, User */}
+            {/* Right Controls: Theme Toggle, Voice alerts, Refresh, Sign out */}
             <div className="flex items-center gap-2.5 sm:gap-3.5 flex-wrap">
-              {/* Telemetry Indicator */}
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
-                <span className="w-2 h-2 rounded-full bg-[#42765A] animate-pulse" />
-                <span>{activeTab === "devices" ? "API connected" : "System online"}</span>
-              </div>
+              {/* Dark / Light Mode Toggle */}
+              <ThemeToggle />
 
-              {/* Voice alerts: reads new requests aloud, e.g. "Patient on bed 4 wants water" */}
+              {/* Voice alerts */}
               {voice.supported && (
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={voice.enabled}
                   onClick={() => voice.setEnabled(!voice.enabled)}
-                  title={
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border transition shadow-xs ${
                     voice.enabled
-                      ? "Voice alerts on: new requests are read aloud. Click to turn off."
-                      : "Turn on voice alerts to hear new requests read aloud"
-                  }
-                  className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border transition ${
-                    voice.enabled
-                      ? "bg-[#FAF0E6] text-[#AD5D3D] border-[#E2C7B8]"
-                      : "bg-[#FFFCF7] text-[#76685F] border-[#E5D9CA] hover:text-[#211C19]"
+                      ? "bg-[#ECFDF5] dark:bg-[#064E3B] text-[#047857] dark:text-[#A7F3D0] border-[#10B981] dark:border-[#059669]"
+                      : "bg-[#F8FAFC] dark:bg-[#1E293B] text-[#64748B] dark:text-[#94A3B8] border-[#E2E8F0] dark:border-[#334155] hover:text-[#0F172A] dark:hover:text-[#F8FAFC]"
                   }`}
                 >
-                  <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M11 5 6 9H3v6h3l5 4V5z" />
-                    {voice.enabled ? (
-                      <>
-                        <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-                        <path d="M18.5 5.5a9 9 0 0 1 0 13" />
-                      </>
-                    ) : (
-                      <path d="m16 9 5 6m0-6-5 6" />
-                    )}
-                  </svg>
-                  <span>{voice.needsClick ? "Voice: click to allow" : voice.enabled ? "Voice alerts on" : "Voice alerts off"}</span>
+                  <Bell className="w-3.5 h-3.5" />
+                  <span>{voice.enabled ? "Voice: On" : "Voice: Off"}</span>
                 </button>
               )}
 
               {/* Refresh button */}
               <button
                 type="button"
-                onClick={() => fetchRequests(true)}
+                onClick={() => {
+                  fetchRequests(true);
+                  fetchAuxData();
+                }}
                 title="Sync clinical ledger"
-                className="p-1.5 rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#211C19] hover:bg-[#F7F2EB] transition"
+                className="p-1.5 rounded-lg border border-[#E2E8F0] dark:border-[#334155] bg-[#F8FAFC] dark:bg-[#1E293B] text-[#64748B] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-[#F8FAFC] hover:border-[#059669] transition shadow-xs"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-[#AD5D3D]" : ""}`} />
+                <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? "animate-spin text-[#059669]" : ""}`} />
               </button>
 
-              {/* User menu / Logout */}
-              <div className="flex items-center gap-2.5 pl-2 border-l border-[#E5D9CA]">
-                <div className="flex items-center gap-2 px-2.5 py-1 rounded-xl bg-[#EDE4D8]/80 text-[#211C19] text-xs font-bold">
-                  <div className="w-5 h-5 rounded-full bg-[#211C19] text-white text-[10px] flex items-center justify-center font-bold">
-                    {user.name?.charAt(0) || "N"}
-                  </div>
-                  <span className="hidden sm:inline">{user.name || "Nurse Station"}</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    await logout();
-                    if (typeof window !== "undefined") {
-                      window.location.href = "/";
-                    }
-                  }}
-                  title="Sign out of station"
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:border-[#FECDCA] hover:bg-[#FEF3F2] transition shadow-xs"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Sign out</span>
-                </button>
-              </div>
+              {/* Logout button */}
+              <button
+                type="button"
+                onClick={async () => {
+                  await logout();
+                  if (typeof window !== "undefined") {
+                    window.location.href = "/";
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-[#E2E8F0] text-[#64748B] hover:text-[#DC2626] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] transition shadow-xs"
+              >
+                <LogOut className="w-3.5 h-3.5" />
+                <span>Sign out</span>
+              </button>
             </div>
           </div>
 
-          {/* Segmented Navigation Tabs */}
-          <div className="mt-3.5 pt-3 border-t border-[#E5D9CA]/80 flex items-center gap-1 overflow-x-auto">
+          {/* Segmented Navigation Tabs - Solid Colors */}
+          <div className="mt-3.5 pt-3 border-t border-[#E2E8F0] flex items-center gap-1.5 overflow-x-auto">
             {[
               { id: "overview", label: "Overview" },
-              { id: "calls", label: `Live calls${awaitingResponseCount > 0 ? ` (${awaitingResponseCount})` : ""}` },
+              { id: "calls", label: `Live Calls (${requests.filter((r) => r.status !== "RESOLVED").length})` },
               { id: "patients", label: `Patients (${patients.length})` },
               { id: "devices", label: `Devices (${devices.length})` },
               { id: "history", label: "History" },
@@ -689,10 +575,10 @@ export default function NurseDashboardPage() {
                   key={tab.id}
                   type="button"
                   onClick={() => setActiveTab(tab.id as typeof activeTab)}
-                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap ${
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold transition whitespace-nowrap shadow-xs ${
                     isActive
-                      ? "bg-[#EFE7DC] text-[#211C19] shadow-xs"
-                      : "text-[#76685F] hover:text-[#211C19] hover:bg-[#F5F1E9]"
+                      ? "bg-[#059669] text-white"
+                      : "bg-[#F1F5F9] text-[#475569] hover:text-[#0F172A] hover:bg-[#E2E8F0] border border-[#CBD5E1]"
                   }`}
                 >
                   {tab.label}
@@ -702,239 +588,158 @@ export default function NurseDashboardPage() {
           </div>
         </header>
 
-        {/* TAB 1: OVERVIEW */}
+        {/* TAB 1: OVERVIEW - Colorful Solid Metric Blocks */}
         {activeTab === "overview" && (
           <div className="space-y-6">
             
-            {/* Page Greeting Subheader */}
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div>
-                <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-[#211C19] tracking-tight">
-                  Good evening, {user.name || "Nurse"}
-                </h1>
-                <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-1">
-                  Live clinical telemetry &amp; bedside monitoring
-                </p>
-              </div>
-            </div>
-
-            {/* Row of 5 Compact Metric Cards (REAL counts strictly from MongoDB) */}
-            {/* Row of 5 Vivid Animated Metric Cards */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5 sm:gap-4">
-              
-              {/* Urgent calls */}
-              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#FEF3F2] border border-[#FECDCA] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#B42318]">Urgent calls</span>
-                  <span className="w-2 h-2 rounded-full bg-[#B42318] group-hover:scale-125 transition-transform" />
-                </div>
-                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#B42318] tracking-tight">
-                  {String(urgentCallsCount).padStart(2, "0")}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-[#B42318]/20 mt-3 overflow-hidden">
-                  <div className="h-full bg-[#B42318] rounded-full w-full" />
-                </div>
-              </div>
-
-              {/* Awaiting response */}
-              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#FAF0E6] border border-[#E2C7B8] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#AD5D3D]">Awaiting response</span>
-                  <span className="w-2 h-2 rounded-full bg-[#AD5D3D] group-hover:scale-125 transition-transform" />
-                </div>
-                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#AD5D3D] tracking-tight">
-                  {String(awaitingResponseCount).padStart(2, "0")}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-[#AD5D3D]/20 mt-3 overflow-hidden">
-                  <div className="h-full bg-[#AD5D3D] rounded-full w-full" />
-                </div>
-              </div>
-
-              {/* In progress */}
-              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#EBF3FB] border border-[#C3DCF4] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#2B6CB0]">In progress</span>
-                  <span className="w-2 h-2 rounded-full bg-[#2B6CB0] group-hover:scale-125 transition-transform" />
-                </div>
-                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#2B6CB0] tracking-tight">
-                  {String(inProgressCount).padStart(2, "0")}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-[#2B6CB0]/20 mt-3 overflow-hidden">
-                  <div className="h-full bg-[#2B6CB0] rounded-full w-full" />
-                </div>
-              </div>
-
-              {/* Resolved today (Vivid Clinical Green Highlight) */}
-              <div className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#F4F9F6] to-[#EDF5F0] border border-[#B8DEC7] hover:border-[#42765A] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between group">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-extrabold text-[#42765A]">Resolved today</span>
-                  <span className="w-2 h-2 rounded-full bg-[#42765A] animate-pulse group-hover:scale-125 transition-transform" />
-                </div>
-                <div className="mt-2 font-heading text-3xl sm:text-4xl font-black text-[#42765A] tracking-tight">
-                  {String(resolvedTodayCount).padStart(2, "0")}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-[#42765A]/25 mt-3 overflow-hidden">
-                  <div className="h-full bg-[#42765A] rounded-full w-full" />
-                </div>
-              </div>
-
-              {/* Total shift events */}
-              <div className="bg-gradient-to-br from-[#FFFCF7] to-[#F5F1E9] border border-[#E5D9CA] rounded-2xl p-4 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between col-span-2 sm:col-span-1 group">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-bold text-[#76685F]">Total events</span>
-                  <span className="w-2 h-2 rounded-full bg-[#76685F] group-hover:scale-125 transition-transform" />
-                </div>
-                <div className="mt-2 font-heading text-3xl sm:text-4xl font-extrabold text-[#211C19] tracking-tight">
-                  {String(totalEventsCount).padStart(2, "0")}
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-[#76685F]/20 mt-3 overflow-hidden">
-                  <div className="h-full bg-[#76685F] rounded-full w-full" />
-                </div>
-              </div>
-            </div>
-
-            {/* Main Overview Grid: Clinical Devices & Gesture Reference */}
+            {/* Hospital Beds Overview & Device Gateways Overview */}
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 lg:gap-6">
               
-              {/* Card 1: Clinical Device Status (6 cols) */}
-              <div className="lg:col-span-6 bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-4">
-                <div className="flex items-center justify-between">
-                  <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
-                    Clinical devices &amp; Gateways
-                  </h2>
-                  <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
-                    {connectedDevicesCount} Online
-                  </span>
-                </div>
-
-                {/* Bedside Gateway Status Row */}
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] flex items-center justify-center shrink-0">
-                    <Radio className="w-5 h-5" />
-                  </div>
-                  <div>
-                    <div className="font-bold text-sm text-[#211C19]">Bedside gateways</div>
-                    <div className="text-xs font-semibold text-[#42765A]">
-                      {connectedDevicesCount > 0 ? "Telemetry Stream Active" : "No Gateways Connected"}
+              {/* Card 1: Hospital Beds Ward Status */}
+              <div className="lg:col-span-6 bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+                <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-[#ECFDF5] text-[#059669] border border-[#A7F3D0]">
+                      <Bed className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-[#0F172A]">
+                        Hospital Beds Occupancy
+                      </h2>
+                      <p className="text-xs text-[#64748B]">
+                        Nurse-controlled bed allocation ledger
+                      </p>
                     </div>
                   </div>
-                </div>
-
-                <div className="pt-2 border-t border-[#E5D9CA]/80 space-y-3">
-                  {/* Connected devices */}
-                  <div>
-                    <div className="flex items-center justify-between text-xs font-medium mb-1.5">
-                      <span className="text-[#76685F]">Connected devices</span>
-                      <span className="font-bold font-mono text-[#211C19]">
-                        {String(connectedDevicesCount).padStart(2, "0")} / {String(devices.length).padStart(2, "0")}
-                      </span>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[#EDE4D8] overflow-hidden">
-                      <div
-                        className="h-full bg-[#42765A] rounded-full transition-all duration-500"
-                        style={{
-                          width: `${devices.length > 0 ? Math.min(100, (connectedDevicesCount / devices.length) * 100) : 0}%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Unassigned devices */}
-                  <div className="flex items-center justify-between text-xs font-medium pt-1">
-                    <span className="text-[#76685F]">Unassigned devices</span>
-                    <span className="font-bold text-[#AD5D3D]">
-                      {unassignedDevicesCount} devices
-                    </span>
-                  </div>
-
-                  {/* Manage devices action */}
                   <button
                     type="button"
-                    onClick={() => setActiveTab("devices")}
-                    className="w-full py-2.5 px-4 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs"
+                    onClick={() => setIsAddPatientModalOpen(true)}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition shadow-xs"
                   >
-                    Manage devices
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Register Patient</span>
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-[#ECFDF5] border border-[#10B981] text-center shadow-xs">
+                    <span className="text-xs text-[#065F46] font-semibold block">Available</span>
+                    <span className="text-2xl font-bold text-[#047857]">{availableBedsCount}</span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#FFFBEB] border border-[#F59E0B] text-center shadow-xs">
+                    <span className="text-xs text-[#92400E] font-semibold block">Pending Approval</span>
+                    <span className="text-2xl font-bold text-[#B45309]">{pendingBedsCount}</span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#EFF6FF] border border-[#3B82F6] text-center shadow-xs">
+                    <span className="text-xs text-[#1E40AF] font-semibold block">Occupied</span>
+                    <span className="text-2xl font-bold text-[#1D4ED8]">{occupiedBedsCount}</span>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("patients")}
+                    className="w-full py-2 px-3 rounded-lg text-xs font-bold text-[#475569] hover:text-[#0F172A] bg-[#F8FAFC] border border-[#CBD5E1] hover:border-[#059669] transition text-center shadow-xs"
+                  >
+                    Manage Patients &amp; Bed Assignments
                   </button>
                 </div>
               </div>
 
-              {/* Card 2: Compact Gesture Reference (6 cols) */}
-              <div className="lg:col-span-6 bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
-                      Gesture Reference
-                    </h2>
-                    <p className="text-xs text-[#76685F] font-medium">
-                      Calibrated ESP32-S3 triggers
-                    </p>
+              {/* Card 2: NPG Device Gateways Registry */}
+              <div className="lg:col-span-6 bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+                <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <div className="p-2 rounded-lg bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
+                      <Radio className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <h2 className="font-bold text-base text-[#0F172A]">
+                        Clinical Devices &amp; Gateways
+                      </h2>
+                      <p className="text-xs text-[#64748B]">
+                        Strict 1-to-1 patient allocation
+                      </p>
+                    </div>
                   </div>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-[#EDE4D8] text-[#76685F]">
-                    Firmware v1.1
+                  <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded bg-[#ECFDF5] text-[#047857] border border-[#10B981]">
+                    {onlineDevicesCount} Online
                   </span>
                 </div>
 
-                <div className="divide-y divide-[#E5D9CA]/70 text-xs">
-                  {PREDEFINED_COMMANDS.map((cmd) => (
-                    <div key={cmd.action} className="py-2.5 first:pt-0 last:pb-0 flex items-center justify-between gap-2">
-                      <div>
-                        <div className="font-bold text-[#211C19] flex items-center gap-1.5">
-                          <span>{cmd.dashboard}</span>
-                        </div>
-                        <div className="text-[11px] text-[#76685F] font-medium">{cmd.gesture}</div>
-                      </div>
-                      <span className="font-mono text-[10px] font-bold text-[#76685F] bg-[#F5F1E9] px-2 py-0.5 rounded border border-[#E5D9CA] shrink-0">
-                        {cmd.serial}
-                      </span>
-                    </div>
-                  ))}
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-center shadow-xs">
+                    <span className="text-xs text-[#475569] font-semibold block">Total Registered</span>
+                    <span className="text-2xl font-bold text-[#0F172A]">{devices.length}</span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#EFF6FF] border border-[#3B82F6] text-center shadow-xs">
+                    <span className="text-xs text-[#1E40AF] font-semibold block">Allocated</span>
+                    <span className="text-2xl font-bold text-[#1D4ED8]">
+                      {devices.filter((d) => d.status === "ASSIGNED" || d.currentAssignment).length}
+                    </span>
+                  </div>
+                  <div className="p-3 rounded-lg bg-[#ECFDF5] border border-[#10B981] text-center shadow-xs">
+                    <span className="text-xs text-[#065F46] font-semibold block">Available</span>
+                    <span className="text-2xl font-bold text-[#047857]">
+                      {devices.filter((d) => d.status === "AVAILABLE" && !d.currentAssignment).length}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab("devices")}
+                    className="w-full py-2 px-3 rounded-lg text-xs font-bold text-[#475569] hover:text-[#0F172A] bg-[#F8FAFC] border border-[#CBD5E1] hover:border-[#2563EB] transition text-center shadow-xs"
+                  >
+                    Manage NPG Devices
+                  </button>
                 </div>
               </div>
 
             </div>
 
-            {/* Bottom Full-Width Section: Recent Clinical Activity (Real from DB) */}
-            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-4 sm:p-5 shadow-subtle">
-              <div className="flex items-center justify-between mb-3.5">
-                <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
-                  Recent clinical activity
+            {/* Recent Clinical Activity */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 shadow-xs">
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="font-bold text-base text-[#0F172A]">
+                  Recent Clinical Activity
                 </h2>
                 <button
                   type="button"
                   onClick={() => setActiveTab("history")}
-                  className="text-xs font-bold text-[#AD5D3D] hover:underline flex items-center gap-1"
+                  className="text-xs font-bold text-[#059669] hover:underline flex items-center gap-1"
                 >
-                  <span>View history</span>
+                  <span>View full history</span>
                   <ArrowRight className="w-3.5 h-3.5" />
                 </button>
               </div>
 
-              <div className="divide-y divide-[#E5D9CA]/80">
+              <div className="divide-y divide-[#E2E8F0]">
                 {requests.filter((r) => r.status === "RESOLVED").length === 0 ? (
-                  <div className="py-4 text-center text-xs text-[#76685F] font-medium">
-                    No clinical calls resolved yet during this shift. Real-time care events will appear here once handled.
+                  <div className="py-6 text-center text-xs text-[#64748B]">
+                    No clinical calls resolved yet during this shift.
                   </div>
                 ) : (
                   requests
                     .filter((r) => r.status === "RESOLVED")
                     .slice(0, 5)
                     .map((req) => (
-                      <div key={req._id} className="py-3 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
-                        <div className="flex items-start gap-2.5">
-                          <div className="mt-0.5 text-[#42765A]">
-                            <CheckCircle2 className="w-4 h-4" />
-                          </div>
+                      <div key={req._id} className="py-3 flex items-center justify-between gap-3 text-xs">
+                        <div className="flex items-center gap-2.5">
+                          <CheckCircle2 className="w-4 h-4 text-[#059669]" />
                           <div>
-                            <div className="font-semibold text-xs sm:text-sm text-[#211C19]">
-                              Call resolved · {req.patient?.bedLabel || "Bedside"}
+                            <div className="font-semibold text-[#0F172A]">
+                              {req.displayLabel || req.label || req.action.replace(/_/g, " ")}
                             </div>
-                            <div className="text-xs text-[#76685F]">
-                              {req.patient?.displayName || "Patient"} ({requestLabel(req)}) — handled by station
+                            <div className="text-[11px] text-[#64748B]">
+                              {req.patient?.displayName || "Patient"} &bull; Bed: {req.patient?.bedLabel || "Active"} &bull; Handled
                             </div>
                           </div>
                         </div>
-                        <span className="text-xs font-mono text-[#76685F] shrink-0">
-                          {formatTimeOnly(req.resolvedAt || req.updatedAt)}
+                        <span className="font-mono text-[11px] text-[#64748B]">
+                          {new Date(req.updatedAt || req.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
                     ))
@@ -942,390 +747,326 @@ export default function NurseDashboardPage() {
               </div>
             </div>
 
-            {/* Bottom Status Indicator */}
-            <div className="text-center py-2">
-              <p className="text-[11px] text-[#76685F] font-medium">
-                NetraVaani Clinical Telemetry Platform · Clinical Station · Real-time patient care ledger active.
-              </p>
-            </div>
           </div>
         )}
 
-        {/* TAB 2: LIVE CALLS (Full Care Ledger) */}
+        {/* TAB 2: LIVE CALLS - Light with Colorful Filter Badges */}
         {activeTab === "calls" && (
-          <div className="space-y-5">
+          <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
-                  Live Care Ledger
+                <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A]">
+                  Live Bedside Care Calls
                 </h1>
-                <p className="text-xs text-[#76685F] font-medium mt-0.5">
-                  Real-time bedside gaze &amp; gesture call queue
+                <p className="text-xs text-[#64748B]">
+                  Real-time bedside gestures and calls requiring nurse attention
                 </p>
               </div>
-              {voice.supported && voice.enabled && (
-                <button
-                  type="button"
-                  onClick={() => speak("Patient on bed 4 wants water.", { interrupt: true })}
-                  className="self-start sm:self-auto px-3 py-1.5 rounded-lg text-xs font-bold border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition"
-                >
-                  Test voice
-                </button>
-              )}
-            </div>
 
-            {/* Search and Filters */}
-            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3 shadow-subtle flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3">
-              <div className="relative flex-1">
-                <Search className="w-4 h-4 text-[#76685F] absolute left-3 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  placeholder="Search by bed, patient, or call type..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-full pl-9 pr-3 py-1.5 rounded-lg text-xs font-medium border border-[#E5D9CA] bg-[#FFFCF7] focus:outline-none focus:border-[#AD5D3D]"
-                />
-              </div>
-
-              <div className="flex items-center gap-1.5 overflow-x-auto">
-                {(["ALL", "NEW", "ACKNOWLEDGED", "IN_PROGRESS", "RESOLVED"] as const).map((s) => (
+              {/* Filters & Search */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-[#64748B] absolute left-2.5 top-2.5" />
+                  <input
+                    type="text"
+                    placeholder="Search calls or beds..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="pl-8 pr-3 py-1.5 text-xs rounded-md bg-white border border-[#CBD5E1] text-[#0F172A] placeholder-[#94A3B8] focus:outline-none focus:border-[#2563EB] shadow-xs"
+                  />
+                </div>
+                {(["ALL", "NEW", "ACKNOWLEDGED", "IN_PROGRESS", "RESOLVED"] as const).map((st) => (
                   <button
-                    key={s}
+                    key={st}
                     type="button"
-                    onClick={() => setFilter(s)}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition ${
-                      filter === s
-                        ? "bg-[#AD5D3D] text-white shadow-xs"
-                        : "bg-[#F5F1E9] text-[#76685F] hover:text-[#211C19]"
+                    onClick={() => setFilter(st)}
+                    className={`px-3 py-1.5 rounded-md text-xs font-semibold transition shadow-xs ${
+                      filter === st
+                        ? st === "NEW"
+                          ? "bg-[#DC2626] text-white"
+                          : st === "ACKNOWLEDGED"
+                          ? "bg-[#D97706] text-white"
+                          : st === "IN_PROGRESS"
+                          ? "bg-[#2563EB] text-white"
+                          : st === "RESOLVED"
+                          ? "bg-[#059669] text-white"
+                          : "bg-[#0F172A] text-white"
+                        : "bg-white text-[#475569] border border-[#CBD5E1] hover:text-[#0F172A]"
                     }`}
                   >
-                    {s}
+                    {st === "NEW" ? "Awaiting" : st.replace("_", " ")}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* Calls Table / Card List */}
-            {filteredRequests.length === 0 ? (
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-2">
-                <div className="w-12 h-12 rounded-full bg-[#EDF5F0] text-[#42765A] flex items-center justify-center mx-auto mb-2">
-                  <CheckCircle2 className="w-6 h-6" />
+            {/* Filtered Calls List */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-xs">
+              {filteredRequests.length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#64748B]">
+                  No active calls matching filter.
                 </div>
-                <h3 className="font-heading font-bold text-base text-[#211C19]">
-                  No Bedside Calls in Queue
-                </h3>
-                <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
-                  Station ledger is currently clear. When a patient blinks or squeezes their calibrated sensor, calls appear here in real time.
-                </p>
-              </div>
-            ) : (
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl shadow-subtle overflow-hidden">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-xs">
-                    <thead>
-                      <tr className="bg-[#F5ECE6]/60 border-b border-[#E5D9CA] text-[#76685F] font-semibold">
-                        <th className="py-3 px-4">Status &amp; Priority</th>
-                        <th className="py-3 px-4">Bed &amp; Patient</th>
-                        <th className="py-3 px-4">Gesture / Request</th>
-                        <th className="py-3 px-4">Elapsed</th>
-                        <th className="py-3 px-4 text-right">Clinical Action</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-[#E5D9CA]/70">
-                      {filteredRequests.map((req) => {
-                        const isEmergency = req.action === "EMERGENCY" || Boolean(req.urgent) || Boolean(req.alarm);
-                        return (
-                          <tr
-                            key={req._id}
-                            className={`hover:bg-[#F7F2EB] transition ${
-                              isEmergency && req.status !== "RESOLVED" ? "bg-[#FEF3F2]/40" : ""
-                            }`}
+              ) : (
+                <div className="divide-y divide-[#E2E8F0]">
+                  {filteredRequests.map((req) => (
+                    <div key={req._id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F8FAFC] transition">
+                      <div className="flex items-start gap-3">
+                        <span
+                          className={`w-3 h-3 rounded-full mt-1 shrink-0 ${
+                            req.status === "RESOLVED"
+                              ? "bg-[#059669]"
+                              : req.status === "IN_PROGRESS"
+                              ? "bg-[#2563EB]"
+                              : req.status === "ACKNOWLEDGED"
+                              ? "bg-[#D97706]"
+                              : "bg-[#DC2626] animate-pulse"
+                          }`}
+                        />
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-sm text-[#0F172A]">
+                              {req.displayLabel || req.label || req.action.replace(/_/g, " ")}
+                            </span>
+                            <span
+                              className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                req.status === "RESOLVED"
+                                  ? "bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0]"
+                                  : req.status === "IN_PROGRESS"
+                                  ? "bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE]"
+                                  : req.status === "ACKNOWLEDGED"
+                                  ? "bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]"
+                                  : "bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA]"
+                              }`}
+                            >
+                              {req.status}
+                            </span>
+                          </div>
+                          <div className="text-xs text-[#64748B] mt-0.5">
+                            Patient: <strong className="text-[#0F172A]">{req.patient?.displayName || "Patient"}</strong> &bull; Bed: <strong className="text-[#0F172A]">{req.patient?.bedLabel || "Unassigned"}</strong> &bull; Gateway: <span className="font-mono text-[#2563EB]">{req.device?.deviceId || "Gateway"}</span>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="flex items-center gap-2 self-end sm:self-auto">
+                        {req.status === "NEW" && (
+                          <button
+                            type="button"
+                            onClick={() => promptStepConfirmation(req, "ACKNOWLEDGED")}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#D97706] hover:bg-[#B45309] text-white transition shadow-xs"
                           >
-                            <td className="py-3.5 px-4 whitespace-nowrap">
-                              <div className="flex items-center gap-2">
-                                <span
-                                  className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${
-                                    isEmergency
-                                      ? "bg-[#FEE4E2] text-[#B42318]"
-                                      : req.status === "RESOLVED"
-                                      ? "bg-[#EDF5F0] text-[#42765A]"
-                                      : req.status === "IN_PROGRESS"
-                                      ? "bg-[#EBF3FB] text-[#2B6CB0]"
-                                      : "bg-[#FAF0E6] text-[#AD5D3D]"
-                                  }`}
-                                >
-                                  {req.status}
-                                </span>
-                                {req.alarm && req.status !== "RESOLVED" ? (
-                                  <span className="text-[10px] font-black uppercase tracking-wider text-white bg-[#B42318] rounded-full px-2 py-0.5 flex items-center gap-1 animate-pulse">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    Alarm
-                                  </span>
-                                ) : isEmergency && (
-                                  <span className="text-[10px] font-bold text-[#B42318] flex items-center gap-1">
-                                    <AlertTriangle className="w-3 h-3" />
-                                    Urgent
-                                  </span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 whitespace-nowrap">
-                              <div className="font-bold text-[#211C19]">
-                                {req.patient?.bedLabel || "Bed Unassigned"}
-                              </div>
-                              <div className="text-[11px] text-[#76685F]">
-                                {req.patient?.displayName || "Patient"} ({req.patient?.patientCode || "N/A"})
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4">
-                              <div className="font-semibold text-[#211C19]">
-                                {requestLabel(req)}
-                              </div>
-                              <div className="text-[11px] text-[#76685F] font-mono">
-                                {req.counts
-                                  ? `${req.counts.eog} blinks · L${req.counts.emgLeft} · R${req.counts.emgRight}${req.counts.together ? ` · ${req.counts.together} together` : ""}`
-                                  : "ESP32 Telemetry Trigger"}
-                              </div>
-                            </td>
-                            <td className="py-3.5 px-4 whitespace-nowrap font-mono text-[11px] text-[#76685F]">
-                              {formatElapsedTime(req.createdAt)}
-                            </td>
-                            <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                              {voice.supported && (
-                                <button
-                                  type="button"
-                                  onClick={() => voice.announce(req)}
-                                  title={announcementFor(req)}
-                                  aria-label={`Read aloud: ${announcementFor(req)}`}
-                                  className="mr-2 p-1.5 rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition align-middle"
-                                >
-                                  <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M11 5 6 9H3v6h3l5 4V5z" />
-                                    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
-                                  </svg>
-                                </button>
-                              )}
-                              {req.status === "NEW" && (
-                                <button
-                                  type="button"
-                                  onClick={() => promptStepConfirmation(req, "ACKNOWLEDGED")}
-                                  className={`px-3 py-1.5 rounded-lg text-xs font-bold transition shadow-xs ${
-                                    isEmergency
-                                      ? "bg-[#B42318] hover:bg-[#912018] text-white"
-                                      : "bg-[#AD5D3D] hover:bg-[#964F33] text-white"
-                                  }`}
-                                >
-                                  Acknowledge
-                                </button>
-                              )}
-                              {req.status === "ACKNOWLEDGED" && (
-                                <button
-                                  type="button"
-                                  onClick={() => promptStepConfirmation(req, "IN_PROGRESS")}
-                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#2B6CB0] hover:bg-[#23588F] text-white transition shadow-xs"
-                                >
-                                  Start Handling
-                                </button>
-                              )}
-                              {req.status === "IN_PROGRESS" && (
-                                <button
-                                  type="button"
-                                  onClick={() => promptStepConfirmation(req, "RESOLVED")}
-                                  className="px-3 py-1.5 rounded-lg text-xs font-bold bg-[#42765A] hover:bg-[#355F49] text-white transition shadow-xs"
-                                >
-                                  Mark Resolved
-                                </button>
-                              )}
-                              {req.status === "RESOLVED" && (
-                                <span className="text-[11px] font-semibold text-[#42765A] inline-flex items-center gap-1">
-                                  <Check className="w-3.5 h-3.5" />
-                                  Closed
-                                </span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                            Acknowledge
+                          </button>
+                        )}
+                        {req.status === "ACKNOWLEDGED" && (
+                          <button
+                            type="button"
+                            onClick={() => promptStepConfirmation(req, "IN_PROGRESS")}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition shadow-xs"
+                          >
+                            Start Handling
+                          </button>
+                        )}
+                        {req.status === "IN_PROGRESS" && (
+                          <button
+                            type="button"
+                            onClick={() => promptStepConfirmation(req, "RESOLVED")}
+                            className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition shadow-xs"
+                          >
+                            Mark Resolved
+                          </button>
+                        )}
+                        {req.status === "RESOLVED" && (
+                          <span className="text-xs font-bold text-[#059669] flex items-center gap-1">
+                            <Check className="w-3.5 h-3.5" />
+                            <span>Resolved</span>
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))}
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         )}
 
-        {/* TAB 3: PATIENT REGISTRY & CARE MANAGEMENT */}
+        {/* TAB 3: PATIENTS REGISTRY & BED ASSIGNMENT - Colorful Cards, No Gradients */}
         {activeTab === "patients" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
-                  Patient Registry &amp; Bedside Allocation
+                <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A]">
+                  Patient Registry &amp; Bed Assignments
                 </h1>
-                <p className="text-xs text-[#76685F] font-medium mt-0.5">
-                  Direct Nurse Care Allocation &amp; Telemetry Streams
+                <p className="text-xs text-[#64748B]">
+                  Nurse-controlled bed assignment &amp; strict 1-to-1 device allocation
                 </p>
               </div>
+
               <button
                 type="button"
                 onClick={() => setIsAddPatientModalOpen(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-xs font-bold bg-[#211C19] hover:bg-[#362E2A] text-white transition shadow-xs self-start sm:self-auto"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition shadow-xs"
               >
                 <Plus className="w-4 h-4" />
-                <span>Register Patient &amp; Assign Device</span>
+                <span>Register Patient</span>
               </button>
             </div>
 
             {/* Patients Grid */}
             {patients.length === 0 ? (
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-3">
-                <div className="w-12 h-12 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center mx-auto">
-                  <User className="w-6 h-6" />
-                </div>
-                <h3 className="font-heading font-bold text-base text-[#211C19]">
-                  No Patients Available
-                </h3>
-                <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
-                  Patients will appear here automatically as soon as they sign up on NetraVaani.
-                </p>
+              <div className="bg-white border border-[#E2E8F0] rounded-xl p-8 text-center text-xs text-[#64748B]">
+                No patients registered yet. Click &quot;Register Patient&quot; above to assign an available bed.
               </div>
             ) : (
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {patients.map((pt) => {
                   const assignedDevice = pt.currentAssignment?.device;
-                  const nurseAuth = pt.nurseAssignment;
+                  const hasConfirmed = Boolean(pt.bedLabel && pt.status === "ACTIVE");
+                  const hasPendingBed = Boolean(pt.pendingBedLabel);
+
                   return (
                     <div
                       key={pt._id}
-                      className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] hover:border-[#42765A] rounded-2xl p-4 sm:p-5 shadow-subtle hover:shadow-hover hover:-translate-y-1 transition-all duration-200 flex flex-col justify-between space-y-4 relative overflow-hidden group"
+                      className="bg-white border border-[#CBD5E1] rounded-xl p-4 sm:p-5 space-y-4 flex flex-col justify-between shadow-xs"
                     >
-                      <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-[#42765A] via-[#5EA780] to-[#42765A]" />
                       <div>
+                        {/* Header: Patient Code & Status */}
                         <div className="flex items-center justify-between gap-2">
-                          <span className="text-xs font-mono font-bold text-[#76685F]">
+                          <span className="text-xs font-mono font-bold text-[#64748B] bg-[#F1F5F9] px-2 py-0.5 rounded border border-[#E2E8F0]">
                             {pt.patientCode}
                           </span>
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold bg-[#EDF5F0] text-[#42765A]">
-                            {pt.bedLabel || "Bed Unassigned"}
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                              pt.status === "ACTIVE"
+                                ? "bg-[#ECFDF5] text-[#047857] border border-[#10B981]"
+                                : "bg-[#FFFBEB] text-[#B45309] border border-[#F59E0B]"
+                            }`}
+                          >
+                            {pt.status === "ACTIVE" ? "Active" : "Pending Bed Approval"}
                           </span>
                         </div>
 
-                        <h3 className="font-heading font-bold text-base text-[#211C19] mt-2">
+                        {/* Patient Name */}
+                        <h3 className="font-bold text-base text-[#0F172A] mt-2">
                           {pt.displayName}
                         </h3>
 
-                        {/* Device allocation */}
-                        <div className="mt-3 pt-3 border-t border-[#E5D9CA]/80 space-y-2 text-xs">
+                        {/* Bed Assignments Breakdown */}
+                        <div className="mt-3 p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] space-y-2 text-xs">
+                          {/* Confirmed Bed */}
                           <div className="flex items-center justify-between">
-                            <span className="text-[#76685F] font-medium">Assigned Device:</span>
-                            {assignedDevice ? (
-                              <span className="inline-flex items-center gap-1.5 font-mono font-bold text-[#42765A] bg-[#EDF5F0] border border-[#C5DDCF] px-2 py-0.5 rounded-lg text-[11px]">
-                                <span className="w-1.5 h-1.5 rounded-full bg-[#42765A] animate-pulse" />
-                                {assignedDevice.name || assignedDevice.deviceId}
+                            <span className="text-[#64748B] font-medium">Confirmed Bed:</span>
+                            {hasConfirmed ? (
+                              <span className="font-bold text-[#047857] font-mono bg-[#ECFDF5] border border-[#A7F3D0] px-2 py-0.5 rounded">
+                                {pt.bedLabel}
                               </span>
                             ) : (
-                              <span className="text-[#76685F] italic">No Device Linked</span>
+                              <span className="text-[#94A3B8] italic">None</span>
                             )}
                           </div>
 
-                          {/* Quick Device Allocation / Deallocation Action */}
-                          <div className="flex items-center justify-between pt-0.5">
-                            <span className="text-[#76685F] font-medium">Device Option:</span>
+                          {/* Pending Bed Proposal */}
+                          {hasPendingBed && (
+                            <div className="flex items-center justify-between pt-1 border-t border-[#E2E8F0]">
+                              <span className="text-[#B45309] font-bold">Pending Proposal:</span>
+                              <span className="font-bold text-[#B45309] font-mono bg-[#FFFBEB] border border-[#FDE68A] px-2 py-0.5 rounded">
+                                Bed {pt.pendingBedLabel}
+                              </span>
+                            </div>
+                          )}
+
+                          {/* Propose Bed Change Action */}
+                          <div className="pt-1.5 flex justify-end">
+                            <button
+                              type="button"
+                              onClick={() => handleOpenBedChangeModal(pt)}
+                              className="text-[11px] font-bold text-[#2563EB] hover:text-[#1D4ED8] transition flex items-center gap-1"
+                            >
+                              <Bed className="w-3 h-3" />
+                              <span>{hasConfirmed ? "Propose Bed Change" : "Assign Available Bed"}</span>
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Device Allocation Section */}
+                        <div className="mt-3 pt-3 border-t border-[#E2E8F0] space-y-2 text-xs">
+                          <div className="flex items-center justify-between">
+                            <span className="text-[#64748B] font-medium">Assigned NPG Device:</span>
                             {assignedDevice ? (
-                              <div className="flex items-center gap-1.5">
-                                <button
-                                  type="button"
-                                  onClick={() => handleOpenAllocateToPatient(pt)}
-                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#AD5D3D] hover:text-[#964F33] bg-[#FAF0E6] hover:bg-[#F5ECE6] border border-[#E2C7B8] px-2 py-1 rounded-lg transition shadow-2xs"
-                                  title="Switch or reassign to a particular device"
-                                >
-                                  <RefreshCw className="w-2.5 h-2.5" />
-                                  <span>Switch</span>
-                                </button>
-                                <button
-                                  type="button"
-                                  disabled={deviceDeallocatingMap[assignedDevice.deviceId]}
-                                  onClick={() => handleDeallocateDevice(assignedDevice.deviceId, pt.displayName)}
-                                  className="inline-flex items-center gap-1 text-[11px] font-bold text-[#B42318] hover:text-[#912018] bg-[#FEF3F2] hover:bg-[#FEE4E2] border border-[#FECDCA] px-2 py-1 rounded-lg transition shadow-2xs"
-                                  title="Unassign device from patient"
-                                >
-                                  <Unlink className="w-2.5 h-2.5" />
-                                  <span>{deviceDeallocatingMap[assignedDevice.deviceId] ? "..." : "Unassign"}</span>
-                                </button>
-                              </div>
+                              <span className="font-mono font-bold text-[#1D4ED8] bg-[#EFF6FF] border border-[#BFDBFE] px-2 py-0.5 rounded">
+                                {assignedDevice.deviceId}
+                              </span>
+                            ) : (
+                              <span className="text-[#94A3B8] italic">No Device Allocated</span>
+                            )}
+                          </div>
+
+                          {/* Device Action: Allocate or Unassign (NO silent switch) */}
+                          <div className="flex items-center justify-between pt-1">
+                            <span className="text-[#64748B] font-medium">Device Action:</span>
+                            {assignedDevice ? (
+                              <button
+                                type="button"
+                                disabled={deviceDeallocatingMap[assignedDevice.deviceId]}
+                                onClick={() => handleDeallocateDevice(assignedDevice.deviceId, pt.displayName)}
+                                className="inline-flex items-center gap-1 text-xs font-bold text-[#DC2626] bg-[#FEF2F2] border border-[#FECACA] px-2.5 py-1 rounded-md hover:bg-[#DC2626] hover:text-white transition shadow-xs"
+                                title="Explicitly unassign device to make it available"
+                              >
+                                <Unlink className="w-3 h-3" />
+                                <span>{deviceDeallocatingMap[assignedDevice.deviceId] ? "Releasing..." : "Unassign Device"}</span>
+                              </button>
                             ) : (
                               <button
                                 type="button"
                                 onClick={() => handleOpenAllocateToPatient(pt)}
-                                className="inline-flex items-center gap-1.5 text-[11px] font-bold text-white bg-[#AD5D3D] hover:bg-[#964F33] px-2.5 py-1 rounded-lg transition shadow-2xs"
-                                title="Assign a particular device to this patient"
+                                className="inline-flex items-center gap-1 text-xs font-bold text-white bg-[#059669] hover:bg-[#047857] px-2.5 py-1 rounded-md transition shadow-xs"
+                                title="Allocate available device"
                               >
                                 <Link2 className="w-3 h-3" />
-                                <span>Assign Device</span>
+                                <span>Allocate Device</span>
                               </button>
                             )}
-                          </div>
-
-                          <div className="flex items-center justify-between">
-                            <span className="text-[#76685F]">Care Link Status:</span>
-                            <span
-                              className={`font-semibold ${
-                                nurseAuth?.status === "APPROVED"
-                                  ? "text-[#42765A]"
-                                  : nurseAuth?.status === "PENDING"
-                                  ? "text-[#AD5D3D]"
-                                  : "text-[#76685F]"
-                              }`}
-                            >
-                              {nurseAuth?.status || "NONE"}
-                            </span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Actions: Nurse Link */}
-                      <div className="pt-3 border-t border-[#E5D9CA]/80 space-y-2">
-
-                        {/* Nurse Authorization Link Button */}
-                        {nurseAuth?.status === "PENDING" ? (
-                          <div className="space-y-2">
-                            <div className="text-center text-xs text-[#AD5D3D] font-semibold py-1">
-                              Awaiting bedside screen approval
-                            </div>
+                      {/* Nurse Care Link Footer */}
+                      <div className="pt-3 border-t border-[#E2E8F0] text-xs">
+                        {pt.nurseAssignment?.status === "PENDING" ? (
+                          <div className="flex items-center justify-between text-xs">
+                            <span className="text-[#B45309] font-semibold">Awaiting bedside approval</span>
                             <button
                               type="button"
-                              disabled={nurseAssignLoading[pt.patientCode]}
                               onClick={() => handleDeallocatePatient(pt.patientCode)}
-                              className="w-full py-1.5 px-2.5 rounded-xl text-[11px] font-bold bg-[#FFFCF7] border border-[#E5D9CA] text-[#76685F] hover:text-[#B42318] hover:bg-[#FEF3F2] transition text-center shadow-xs"
+                              className="text-[11px] text-[#DC2626] hover:underline"
                             >
-                              {nurseAssignLoading[pt.patientCode] ? "Cancelling..." : "Cancel Request"}
+                              Cancel
                             </button>
                           </div>
-                        ) : nurseAuth?.status === "APPROVED" ? (
-                          <div className="space-y-2">
-                            <div className="flex items-center justify-center gap-1.5 text-xs text-[#42765A] font-semibold py-1">
+                        ) : pt.nurseAssignment?.status === "APPROVED" ? (
+                          <div className="flex items-center justify-between text-xs text-[#047857]">
+                            <span className="flex items-center gap-1 font-bold">
                               <Check className="w-3.5 h-3.5" />
-                              <span>Linked to {nurseAuth.nurseName || "Nurse"}</span>
-                            </div>
+                              <span>Care linked</span>
+                            </span>
                             <button
                               type="button"
-                              disabled={nurseAssignLoading[pt.patientCode]}
                               onClick={() => handleDeallocatePatient(pt.patientCode)}
-                              className="w-full py-1.5 px-3 rounded-xl text-xs font-bold bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] hover:bg-[#FEE4E2] transition text-center shadow-xs"
+                              className="text-[11px] text-[#64748B] hover:text-[#DC2626]"
                             >
-                              {nurseAssignLoading[pt.patientCode] ? "Deallocating..." : "Deallocate Patient"}
+                              Unlink
                             </button>
                           </div>
                         ) : (
                           <button
                             type="button"
-                            title="Send approval request to bedside"
                             disabled={nurseAssignLoading[pt.patientCode]}
-                            onClick={() => handleRequestPatientAssignment(pt.patientCode)}
-                            className="w-full py-2 px-3 rounded-xl text-xs font-bold bg-[#42765A] text-white hover:bg-[#355F49] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                            onClick={() => handleOpenCareLinkModal(pt)}
+                            className="w-full py-1.5 rounded-lg text-xs font-semibold bg-[#F8FAFC] border border-[#CBD5E1] text-[#475569] hover:text-[#0F172A] hover:border-[#059669] transition"
                           >
-                            <Bell className="w-3.5 h-3.5" />
-                            <span>{nurseAssignLoading[pt.patientCode] ? "Requesting..." : "Request Link"}</span>
+                            {nurseAssignLoading[pt.patientCode] ? "Requesting..." : "Send Care Link Request"}
                           </button>
                         )}
                       </div>
@@ -1337,361 +1078,151 @@ export default function NurseDashboardPage() {
           </div>
         )}
 
-        {/* TAB 4: DEVICES (Device Management) */}
+        {/* TAB 4: DEVICES - Light with Colorful Badges */}
         {activeTab === "devices" && (
-          <div className="space-y-6">
-            
-            {/* Header with Breadcrumb */}
-            <div>
-              <div className="text-[11px] font-bold text-[#AD5D3D] uppercase tracking-wider">
-                HARDWARE OPERATIONS / REGISTRY
-              </div>
-              <h1 className="font-heading text-2xl sm:text-3xl font-extrabold text-[#211C19] tracking-tight mt-1">
-                Device Management
-              </h1>
-              <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-1">
-                Register bedside gateways, manage patient assignments, and monitor incoming telemetry.
-              </p>
-            </div>
-
-            {/* 4 Stat Cards Row (100% Real from DB) */}
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5 sm:gap-4">
-              
-              {/* Registered devices */}
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
-                <div className="flex items-center gap-2 text-[#AD5D3D]">
-                  <Cpu className="w-4 h-4" />
-                  <span className="text-xs font-semibold text-[#76685F]">Registered devices</span>
-                </div>
-                <div className="mt-2 font-heading text-3xl font-extrabold text-[#211C19] tracking-tight">
-                  {String(devices.length).padStart(2, "0")}
-                </div>
-                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Registered units</span>
+          <div className="space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div>
+                <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A]">
+                  NPG Device Registry &amp; Allocation
+                </h1>
+                <p className="text-xs text-[#64748B]">
+                  Strict one-device-to-one-patient hardware allocation
+                </p>
               </div>
 
-              {/* Online */}
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
-                <div className="flex items-center gap-2 text-[#42765A]">
-                  <Radio className="w-4 h-4" />
-                  <span className="text-xs font-semibold text-[#76685F]">Online</span>
-                </div>
-                <div className="mt-2 font-heading text-3xl font-extrabold text-[#42765A] tracking-tight">
-                  {String(connectedDevicesCount).padStart(2, "0")}
-                </div>
-                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Reachable gateways</span>
-              </div>
-
-              {/* Assigned */}
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
-                <div className="flex items-center gap-2 text-[#2B6CB0]">
-                  <Bed className="w-4 h-4" />
-                  <span className="text-xs font-semibold text-[#76685F]">Assigned</span>
-                </div>
-                <div className="mt-2 font-heading text-3xl font-extrabold text-[#2B6CB0] tracking-tight">
-                  {String(devices.filter((d) => d.currentAssignment).length).padStart(2, "0")}
-                </div>
-                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Patient-bed links</span>
-              </div>
-
-              {/* Telemetry alerts */}
-              <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-4 shadow-subtle flex flex-col justify-between">
-                <div className="flex items-center gap-2 text-[#AD5D3D]">
-                  <Activity className="w-4 h-4" />
-                  <span className="text-xs font-semibold text-[#76685F]">Telemetry alerts</span>
-                </div>
-                <div className="mt-2 font-heading text-3xl font-extrabold text-[#AD5D3D] tracking-tight">
-                  {String(urgentCallsCount).padStart(2, "0")}
-                </div>
-                <span className="text-[11px] text-[#76685F] mt-1 font-medium">Requires review</span>
-              </div>
-            </div>
-
-            {/* Register a bedside device (Commissioning Wizard Card) */}
-            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 shadow-subtle space-y-4">
-              
-              <div className="flex items-start gap-3.5">
-                <div className="w-10 h-10 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center shrink-0 border border-[#E2C7B8]">
-                  <Bluetooth className="w-5 h-5" />
-                </div>
-                <div>
-                  <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
-                    Register a bedside device
-                  </h2>
-                  <p className="text-xs sm:text-sm text-[#76685F] font-medium mt-0.5">
-                    Commission an NPG Lite gateway and connect it to hospital Wi-Fi.
-                  </p>
-                </div>
-              </div>
-
-              {/* 4-Step Wizard Tiles Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 pt-2">
-                
-                {/* Step 1 */}
-                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
-                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
-                    STEP 01
-                  </div>
-                  <div className="text-[#AD5D3D] my-1.5">
-                    <Bluetooth className="w-4 h-4" />
-                  </div>
-                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                    Discover hardware
-                  </div>
-                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
-                    Find nearby NPG Lite devices
-                  </div>
-                </div>
-
-                {/* Step 2 */}
-                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
-                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
-                    STEP 02
-                  </div>
-                  <div className="text-[#AD5D3D] my-1.5">
-                    <Wifi className="w-4 h-4" />
-                  </div>
-                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                    Configure network
-                  </div>
-                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
-                    Provision Wi-Fi and verify connection
-                  </div>
-                </div>
-
-                {/* Step 3 */}
-                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
-                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
-                    STEP 03
-                  </div>
-                  <div className="text-[#AD5D3D] my-1.5">
-                    <Cpu className="w-4 h-4" />
-                  </div>
-                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                    Register device
-                  </div>
-                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
-                    Save hardware ID and metadata
-                  </div>
-                </div>
-
-                {/* Step 4 */}
-                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-xl p-3.5 shadow-xs">
-                  <div className="text-[10px] font-mono font-bold text-[#76685F] uppercase tracking-wider">
-                    STEP 04
-                  </div>
-                  <div className="text-[#AD5D3D] my-1.5">
-                    <Activity className="w-4 h-4" />
-                  </div>
-                  <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                    Verify telemetry
-                  </div>
-                  <div className="text-[11px] text-[#76685F] font-medium mt-0.5">
-                    Confirm real events reach the API
-                  </div>
-                </div>
-              </div>
-
-              {/* CTA Button: Design commissioning wizard → */}
               <button
                 type="button"
                 onClick={() => setIsBleModalOpen(true)}
-                className="w-full py-3 px-5 rounded-xl font-bold text-xs sm:text-sm bg-[#211C19] hover:bg-[#362E2A] text-white transition shadow-sm flex items-center justify-center gap-2"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition shadow-xs"
               >
-                <span>Design commissioning wizard</span>
-                <ArrowRight className="w-4 h-4" />
+                <Bluetooth className="w-4 h-4" />
+                <span>Commission New Device</span>
               </button>
             </div>
 
-            {/* Registered Devices List (100% Real from DB) */}
-            <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <div className="flex items-center gap-2">
-                    <h2 className="font-heading font-bold text-base sm:text-lg text-[#211C19]">
-                      Registered devices
-                    </h2>
-                    <span className="text-[11px] font-bold font-mono px-2 py-0.5 rounded-full bg-[#FAF0E6] text-[#AD5D3D] border border-[#E2C7B8]">
-                      {devices.length} devices
-                    </span>
-                  </div>
-                  <p className="text-xs text-[#76685F] font-medium mt-0.5">
-                    Hardware inventory and assignment status
-                  </p>
-                </div>
-              </div>
-
-              {/* Devices Cards */}
+            {/* Devices List Table */}
+            <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-xs">
               {devices.length === 0 ? (
-                <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-8 text-center shadow-subtle space-y-3">
-                  <div className="w-12 h-12 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center mx-auto">
-                    <Cpu className="w-6 h-6" />
-                  </div>
-                  <h3 className="font-heading font-bold text-base text-[#211C19]">
-                    No Bedside Gateways Registered Yet
-                  </h3>
-                  <p className="text-xs text-[#76685F] font-medium max-w-sm mx-auto leading-relaxed">
-                    Commission an ESP32-S3 bedside gateway using Web Bluetooth or register hardware directly below.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setIsBleModalOpen(true)}
-                    className="mt-2 px-4 py-2 rounded-xl text-xs font-bold bg-[#AD5D3D] text-white hover:bg-[#964F33] transition"
-                  >
-                    + Commission Gateway via BLE
-                  </button>
+                <div className="p-8 text-center text-xs text-[#64748B]">
+                  No NPG devices registered yet. Commission a device to make it available.
                 </div>
               ) : (
-                <div className="space-y-3.5">
-                  {devices.map((d) => (
-                    <div
-                      key={d._id}
-                      className="card-clinical-green bg-gradient-to-br from-[#FFFCF7] via-[#FFFCF7] to-[#F2F8F4] border border-[#CDE2D5] hover:border-[#42765A] rounded-2xl p-4 sm:p-5 shadow-subtle hover:shadow-hover hover:-translate-y-0.5 transition-all duration-200 space-y-3 relative overflow-hidden group"
-                    >
-                      <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-[#42765A] via-[#5EA780] to-[#42765A]" />
-                      <div className="flex items-center justify-between gap-3 flex-wrap">
+                <div className="divide-y divide-[#E2E8F0]">
+                  {devices.map((dev) => {
+                    const isOnline = dev.connectivityStatus === "ONLINE";
+                    const isAssigned = Boolean(dev.status === "ASSIGNED" || dev.currentAssignment);
+                    const isAvailable = dev.status === "AVAILABLE" && !dev.currentAssignment;
+
+                    return (
+                      <div key={dev._id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#F8FAFC] transition text-xs">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 rounded-xl bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] flex items-center justify-center shrink-0">
-                            <Cpu className="w-5 h-5" />
+                          <div className="p-2 rounded-lg bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
+                            <Radio className="w-4 h-4" />
                           </div>
                           <div>
-                            <h3 className="font-heading font-bold text-sm sm:text-base text-[#211C19]">
-                              {d.name || d.deviceId}
-                            </h3>
-                            <div className="text-xs font-mono text-[#76685F]">
-                              {d.hardwareId || d.deviceId} · FW {d.firmwareVersion || "v1.1.1"}
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-sm text-[#0F172A]">{dev.name || dev.deviceId}</span>
+                              <span className="font-mono text-[11px] text-[#64748B]">({dev.deviceId})</span>
+                              {dev.hardwareId && (
+                                <span className="font-mono text-[10px] text-[#94A3B8]">HW: {dev.hardwareId}</span>
+                              )}
+                            </div>
+                            <div className="text-[11px] text-[#64748B] mt-0.5">
+                              {isAssigned && dev.currentAssignment?.patient ? (
+                                <span>Allocated to: <strong className="text-[#0F172A]">{dev.currentAssignment.patient.displayName}</strong> ({dev.currentAssignment.patient.patientCode})</span>
+                              ) : (
+                                <span>Unallocated</span>
+                              )}
                             </div>
                           </div>
                         </div>
-                        <span
-                          className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-bold ${
-                            d.connectivityStatus === "ONLINE" || d.status === "AVAILABLE" || d.status === "ASSIGNED"
-                              ? "bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]"
-                              : "bg-[#FEF3F2] text-[#B42318] border border-[#FECDCA]"
-                          }`}
-                        >
-                          {d.connectivityStatus === "ONLINE" ? "Online" : d.status}
-                        </span>
-                      </div>
 
-                      <div className="pt-2 border-t border-[#E5D9CA]/80 grid grid-cols-1 sm:grid-cols-3 gap-2 text-xs">
-                        <div>
-                          <span className="text-[#76685F] block">Assigned bed</span>
-                          <span className="font-bold text-[#211C19]">
-                            {d.currentAssignment?.patient?.bedLabel || "Unassigned"}
+                        {/* Status Badges & Unassign Action */}
+                        <div className="flex items-center gap-3 self-end sm:self-auto">
+                          {/* Connectivity */}
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                              isOnline
+                                ? "bg-[#ECFDF5] text-[#047857] border border-[#10B981]"
+                                : "bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]"
+                            }`}
+                          >
+                            {isOnline ? "ONLINE" : "OFFLINE"}
                           </span>
-                        </div>
-                        <div>
-                          <span className="text-[#76685F] block">Patient</span>
-                          <span className="font-bold text-[#211C19]">
-                            {d.currentAssignment?.patient?.displayName || "Unassigned"}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[#76685F] block">Last telemetry</span>
-                          <span className="font-mono text-[#76685F]">
-                            {formatElapsedTime(d.lastSeenAt || d.updatedAt)}
-                          </span>
-                        </div>
-                      </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDeviceDetailsTab("overview");
-                            setSelectedDeviceDetails(d);
-                          }}
-                          className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#76685F] hover:text-[#211C19] border border-[#E5D9CA] hover:bg-[#F7F2EB] transition text-center shadow-xs flex items-center justify-center gap-1.5"
-                        >
-                          <span>Details</span>
-                          <ArrowUpRight className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setDeviceDetailsTab("commands");
-                            setSelectedDeviceDetails(d);
-                          }}
-                          className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#AD5D3D] hover:text-[#964F33] border border-[#E2C7B8] bg-[#FAF0E6]/60 hover:bg-[#F5ECE6] transition text-center shadow-xs flex items-center justify-center gap-1.5"
-                        >
-                          <SlidersHorizontal className="w-3.5 h-3.5" />
-                          <span>Commands</span>
-                        </button>
-                        {d.currentAssignment ? (
-                          <button
-                            type="button"
-                            disabled={deviceDeallocatingMap[d.deviceId]}
-                            onClick={() => handleDeallocateDevice(d.deviceId, d.currentAssignment?.patient?.displayName)}
-                            className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-[#B42318] hover:text-[#912018] border border-[#FECDCA] bg-[#FEF3F2] hover:bg-[#FEE4E2] transition text-center shadow-xs flex items-center justify-center gap-1.5"
+                          {/* Allocation Status */}
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                              isAvailable
+                                ? "bg-[#ECFDF5] text-[#047857] border border-[#10B981]"
+                                : isAssigned
+                                ? "bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE]"
+                                : "bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA]"
+                            }`}
                           >
-                            <Unlink className="w-3.5 h-3.5" />
-                            <span>{deviceDeallocatingMap[d.deviceId] ? "Unassigning..." : "Unassign"}</span>
-                          </button>
-                        ) : (
-                          <button
-                            type="button"
-                            onClick={() => handleOpenAllocateDeviceToPatient(d)}
-                            className="w-full py-2.5 px-3 rounded-xl text-xs font-bold text-white bg-[#42765A] hover:bg-[#355F49] transition text-center shadow-xs flex items-center justify-center gap-1.5"
-                          >
-                            <Link2 className="w-3.5 h-3.5" />
-                            <span>Allocate</span>
-                          </button>
-                        )}
+                            {dev.status}
+                          </span>
+
+                          {/* Action */}
+                          {isAssigned && (
+                            <button
+                              type="button"
+                              disabled={deviceDeallocatingMap[dev.deviceId]}
+                              onClick={() => handleDeallocateDevice(dev.deviceId)}
+                              className="px-2.5 py-1 rounded-md text-xs font-bold text-[#DC2626] bg-[#FEF2F2] border border-[#FECACA] hover:bg-[#DC2626] hover:text-white transition shadow-xs"
+                            >
+                              {deviceDeallocatingMap[dev.deviceId] ? "Releasing..." : "Unassign"}
+                            </button>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
-            </div>
-
-            {/* Bottom Status */}
-            <div className="text-center py-2">
-              <p className="text-[11px] text-[#76685F] font-medium">
-                Hardware registry connected to NetraVaani device management cluster.
-              </p>
             </div>
           </div>
         )}
 
         {/* TAB 5: HISTORY */}
         {activeTab === "history" && (
-          <div className="space-y-6">
+          <div className="space-y-4">
             <div>
-              <h1 className="font-heading text-2xl font-extrabold text-[#211C19] tracking-tight">
+              <h1 className="text-xl sm:text-2xl font-bold text-[#0F172A]">
                 Clinical Shift History
               </h1>
-              <p className="text-xs text-[#76685F] font-medium mt-0.5">
-                Audit trail of care resolutions and bedside telemetry alerts
+              <p className="text-xs text-[#64748B]">
+                Audit log of all handled bedside care calls
               </p>
             </div>
 
-            <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 shadow-subtle divide-y divide-[#E5D9CA]/80">
-              {requests
-                .filter((r) => r.status === "RESOLVED")
-                .map((req) => (
-                  <div key={req._id} className="py-3.5 first:pt-0 last:pb-0 flex items-start justify-between gap-3">
-                    <div className="flex items-start gap-3">
-                      <div className="mt-0.5 text-[#42765A]">
-                        <CheckCircle2 className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <div className="font-bold text-xs sm:text-sm text-[#211C19]">
-                          Resolved: {requestLabel(req)} · {req.patient?.bedLabel || "Bedside"}
-                        </div>
-                        <div className="text-xs text-[#76685F] mt-0.5">
-                          Patient {req.patient?.displayName || "Patient"} ({req.patient?.patientCode || "N/A"}) · Handled by nursing station
-                        </div>
-                      </div>
-                    </div>
-                    <span className="font-mono text-xs text-[#76685F]">
-                      {formatTimeOnly(req.resolvedAt || req.updatedAt)}
-                    </span>
-                  </div>
-                ))}
-              {requests.filter((r) => r.status === "RESOLVED").length === 0 && (
-                <div className="py-6 text-center text-xs text-[#76685F]">
-                  No resolved records yet for this clinical shift.
+            <div className="bg-white border border-[#E2E8F0] rounded-xl overflow-hidden shadow-xs divide-y divide-[#E2E8F0]">
+              {requests.filter((r) => r.status === "RESOLVED").length === 0 ? (
+                <div className="p-8 text-center text-xs text-[#64748B]">
+                  No resolved clinical records yet.
                 </div>
+              ) : (
+                requests
+                  .filter((r) => r.status === "RESOLVED")
+                  .map((req) => (
+                    <div key={req._id} className="p-4 flex items-center justify-between gap-3 text-xs">
+                      <div className="flex items-center gap-3">
+                        <CheckCircle2 className="w-4 h-4 text-[#059669]" />
+                        <div>
+                          <div className="font-bold text-[#0F172A]">
+                            {req.displayLabel || req.label || req.action.replace(/_/g, " ")}
+                          </div>
+                          <div className="text-[11px] text-[#64748B]">
+                            Patient: {req.patient?.displayName || "Patient"} &bull; Bed: {req.patient?.bedLabel || "Active"} &bull; Gateway: {req.device?.deviceId || "Gateway"}
+                          </div>
+                        </div>
+                      </div>
+                      <span className="font-mono text-[#64748B] text-[11px]">
+                        {new Date(req.updatedAt || req.createdAt).toLocaleString()}
+                      </span>
+                    </div>
+                  ))
               )}
             </div>
           </div>
@@ -1699,522 +1230,28 @@ export default function NurseDashboardPage() {
 
       </div>
 
-
-
-      {/* IN-PLACE CONFIRMATION DIALOG (Crucial: Does NOT jump to top of page) */}
-      {stepConfirm && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-[#211C19]/40 backdrop-blur-xs flex items-center justify-center p-4"
-        >
-          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover animate-in fade-in zoom-in-95 duration-150">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
-                  <Shield className="w-5 h-5" />
-                </div>
-                <h3 className="font-heading font-bold text-base text-[#211C19]">
-                  {stepConfirm.stepTitle}
-                </h3>
-              </div>
-              <button
-                type="button"
-                onClick={() => setStepConfirm(null)}
-                className="text-[#76685F] hover:text-[#211C19] p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <p className="text-xs sm:text-sm text-[#76685F] mt-3 leading-relaxed">
-              {stepConfirm.stepDescription}
-            </p>
-
-            <div className="mt-5 pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setStepConfirm(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={actionLoadingMap[stepConfirm.request._id]}
-                onClick={handleConfirmNextStep}
-                className={`px-4 py-2 rounded-xl text-xs font-bold transition shadow-xs ${stepConfirm.actionButtonColor}`}
-              >
-                {actionLoadingMap[stepConfirm.request._id] ? "Updating..." : stepConfirm.actionButtonLabel}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-
-      {/* DEVICE DETAILS MODAL */}
-      {selectedDeviceDetails && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-[#211C19]/40 backdrop-blur-xs flex items-center justify-center p-4"
-        >
-          <div
-            className={`bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 w-full shadow-hover max-h-[92vh] overflow-y-auto transition-[max-width] duration-300 ${
-              deviceDetailsTab === "commands" ? "max-w-6xl" : "max-w-md"
-            }`}
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="font-heading font-bold text-base text-[#211C19]">
-                {deviceDetailsTab === "commands" ? `${selectedDeviceDetails.name} · Commands` : "Device Telemetry Details"}
-              </h3>
-              <button
-                type="button"
-                aria-label="Close device details"
-                onClick={() => {
-                  setSelectedDeviceDetails(null);
-                  setDeviceDetailsTab("overview");
-                }}
-                className="text-[#76685F] hover:text-[#211C19] p-1"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-
-            <div role="tablist" aria-label="Device details" className="mb-4 inline-flex rounded-xl bg-[#F0EAE1] p-1 text-xs font-bold">
-              {(["overview", "commands"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  role="tab"
-                  aria-selected={deviceDetailsTab === t}
-                  onClick={() => setDeviceDetailsTab(t)}
-                  className={`rounded-lg px-3.5 py-1.5 transition ${
-                    deviceDetailsTab === t ? "bg-[#FFFCF7] text-[#AD5D3D] shadow-subtle" : "text-[#76685F] hover:text-[#211C19]"
-                  }`}
-                >
-                  {t === "overview" ? "Overview" : "Commands"}
-                </button>
-              ))}
-            </div>
-
-            {deviceDetailsTab === "commands" ? (
-              <CommandRuleEditor deviceId={selectedDeviceDetails.deviceId} />
-            ) : (
-            <>
-            <div className="space-y-2.5 text-xs">
-              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
-                <span className="text-[#76685F]">Device Name</span>
-                <span className="font-bold text-[#211C19]">{selectedDeviceDetails.name}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
-                <span className="text-[#76685F]">Device ID</span>
-                <span className="font-mono text-[#211C19]">{selectedDeviceDetails.deviceId}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
-                <span className="text-[#76685F]">Firmware Version</span>
-                <span className="font-mono text-[#211C19]">{selectedDeviceDetails.firmwareVersion || "v1.1.1"}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
-                <span className="text-[#76685F]">Connectivity</span>
-                <span className="font-bold text-[#42765A]">{selectedDeviceDetails.connectivityStatus || "ONLINE"}</span>
-              </div>
-              <div className="flex justify-between py-1 border-b border-[#E5D9CA]/60">
-                <span className="text-[#76685F]">Assigned Bed</span>
-                <span className="font-bold text-[#211C19]">
-                  {selectedDeviceDetails.currentAssignment?.patient?.bedLabel || "Unassigned"}
-                </span>
-              </div>
-              <div className="flex justify-between py-1">
-                <span className="text-[#76685F]">Assigned Patient</span>
-                <span className="font-bold text-[#211C19]">
-                  {selectedDeviceDetails.currentAssignment?.patient?.displayName || "Unallocated"}
-                </span>
-              </div>
-            </div>
-
-            <div className="mt-5 pt-3 border-t border-[#E5D9CA] flex items-center justify-between gap-2">
-              <div>
-                {selectedDeviceDetails.currentAssignment ? (
-                  <button
-                    type="button"
-                    disabled={deviceDeallocatingMap[selectedDeviceDetails.deviceId]}
-                    onClick={() => handleDeallocateDevice(selectedDeviceDetails.deviceId, selectedDeviceDetails.currentAssignment?.patient?.displayName)}
-                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-[#B42318] hover:text-[#912018] bg-[#FEF3F2] border border-[#FECDCA] hover:bg-[#FEE4E2] transition flex items-center gap-1.5 shadow-2xs"
-                  >
-                    <Unlink className="w-3.5 h-3.5" />
-                    <span>{deviceDeallocatingMap[selectedDeviceDetails.deviceId] ? "Unassigning..." : "Unassign Device"}</span>
-                  </button>
-                ) : (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const dev = selectedDeviceDetails;
-                      setSelectedDeviceDetails(null);
-                      handleOpenAllocateDeviceToPatient(dev);
-                    }}
-                    className="px-3.5 py-2 rounded-xl text-xs font-bold text-white bg-[#42765A] hover:bg-[#355F49] transition flex items-center gap-1.5 shadow-xs"
-                  >
-                    <Link2 className="w-3.5 h-3.5" />
-                    <span>Allocate to Patient</span>
-                  </button>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={() => setSelectedDeviceDetails(null)}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-[#211C19] text-white hover:bg-[#362E2A] transition"
-              >
-                Done
-              </button>
-            </div>
-            </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ALLOCATE DEVICE TO PATIENT MODAL */}
-      {(allocateModalPatient || allocateModalDevice) && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-[#211C19]/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-        >
-          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-lg w-full shadow-hover animate-in fade-in zoom-in-95 duration-150 space-y-5 my-8">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
-                  <Cpu className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-heading font-bold text-lg text-[#211C19]">
-                    {allocateModalPatient ? "Assign Patient with a Particular Device" : "Assign Device to Patient"}
-                  </h3>
-                  <p className="text-xs text-[#76685F] font-medium">
-                    Link a particular bedside hardware unit to stream real-time patient gaze &amp; gesture telemetry.
-                  </p>
-                </div>
-              </div>
-              <button
-                type="button"
-                aria-label="Close allocation modal"
-                onClick={handleCloseAllocateModal}
-                className="text-[#76685F] hover:text-[#211C19] p-1.5 rounded-lg hover:bg-[#F5ECE6] transition"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Target Context Summary */}
-            {allocateModalPatient ? (
-              <div className="p-3.5 rounded-xl bg-[#F5ECE6]/60 border border-[#E2C7B8] flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-full bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center font-bold text-xs shrink-0">
-                    <User className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-[#211C19]">
-                      {allocateModalPatient.displayName}
-                    </div>
-                    <div className="text-[11px] font-mono text-[#76685F]">
-                      {allocateModalPatient.patientCode} &bull; Bed: {allocateModalPatient.bedLabel || "Unassigned"}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
-                  Target Patient
-                </span>
-              </div>
-            ) : allocateModalDevice ? (
-              <div className="p-3.5 rounded-xl bg-[#EDF5F0]/60 border border-[#C5DDCF] flex items-center justify-between gap-3">
-                <div className="flex items-center gap-3">
-                  <div className="w-9 h-9 rounded-xl bg-[#EDF5F0] text-[#42765A] flex items-center justify-center shrink-0">
-                    <Cpu className="w-4 h-4" />
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-[#211C19]">
-                      {allocateModalDevice.name}
-                    </div>
-                    <div className="text-[11px] font-mono text-[#76685F]">
-                      {allocateModalDevice.deviceId} &bull; FW {allocateModalDevice.firmwareVersion || "v1.1.1"}
-                    </div>
-                  </div>
-                </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]">
-                  Particular Device
-                </span>
-              </div>
-            ) : null}
-
-            {/* Selection Form */}
-            <div className="space-y-4">
-              {/* If picking a device for a patient */}
-              {allocateModalPatient && (
-                <div className="space-y-2.5">
-                  <div className="flex items-center justify-between">
-                    <label className="block text-xs font-bold text-[#211C19]">
-                      Select or Search Particular Device:
-                    </label>
-                    <span className="text-[11px] text-[#76685F]">
-                      {filteredDevicesForModal.length} registered
-                    </span>
-                  </div>
-
-                  {/* Search particular device */}
-                  <div className="relative">
-                    <Search className="w-3.5 h-3.5 text-[#76685F] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
-                    <input
-                      type="text"
-                      placeholder="Search particular device by name, ID (e.g. npg-...), or MAC..."
-                      value={deviceSearchQuery}
-                      onChange={(e) => setDeviceSearchQuery(e.target.value)}
-                      className="w-full pl-8 pr-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
-                    />
-                  </div>
-
-                  {filteredDevicesForModal.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] text-xs space-y-2">
-                      <div className="flex items-center gap-2 font-bold">
-                        <AlertTriangle className="w-4 h-4 shrink-0" />
-                        <span>No Devices Matching Query</span>
-                      </div>
-                      <p className="text-[11px] text-[#76685F] leading-relaxed">
-                        No registered devices match &ldquo;{deviceSearchQuery}&rdquo;.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                      {filteredDevicesForModal.map((d) => {
-                        const isSelected = selectedAllocateDeviceId === d.deviceId;
-                        const isAssigned = Boolean(d.currentAssignment);
-                        return (
-                          <div
-                            key={d.deviceId}
-                            onClick={() => {
-                              setSelectedAllocateDeviceId(d.deviceId);
-                              setManualDeviceId("");
-                            }}
-                            className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-center justify-between gap-3 ${
-                              isSelected
-                                ? "border-[#42765A] bg-[#EDF5F0]/70 ring-1 ring-[#42765A]"
-                                : "border-[#E5D9CA] hover:border-[#AD5D3D]/60 bg-[#FFFCF7]"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3 min-w-0">
-                              <div
-                                className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
-                                  isSelected ? "bg-[#42765A] text-white" : "bg-[#FAF0E6] text-[#AD5D3D]"
-                                }`}
-                              >
-                                <Cpu className="w-4 h-4" />
-                              </div>
-                              <div className="min-w-0">
-                                <div className="font-bold text-[#211C19] truncate">{d.name}</div>
-                                <div className="text-[11px] font-mono text-[#76685F]">
-                                  {d.deviceId} &bull; FW {d.firmwareVersion || "v1.1.1"}
-                                </div>
-                                {isAssigned && (
-                                  <div className="text-[10px] text-[#AD5D3D] font-medium mt-0.5">
-                                    Currently linked to {d.currentAssignment?.patient?.displayName || "another patient"}
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                            <div className="flex items-center gap-2 shrink-0">
-                              <span
-                                className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                  isAssigned
-                                    ? "bg-[#FAF0E6] text-[#AD5D3D] border border-[#E2C7B8]"
-                                    : d.connectivityStatus === "ONLINE"
-                                    ? "bg-[#EDF5F0] text-[#42765A] border border-[#C5DDCF]"
-                                    : "bg-[#F5ECE6] text-[#76685F]"
-                                }`}
-                              >
-                                {isAssigned ? "Assigned" : d.connectivityStatus === "ONLINE" ? "Online" : "Available"}
-                              </span>
-                              <div
-                                className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                                  isSelected
-                                    ? "border-[#42765A] bg-[#42765A] text-white"
-                                    : "border-[#D0C2B4] bg-white"
-                                }`}
-                              >
-                                {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-
-                  {/* Manual Device ID Input Option */}
-                  <div className="pt-1.5 border-t border-[#E5D9CA]/60">
-                    <button
-                      type="button"
-                      onClick={() => setShowManualDeviceInput(!showManualDeviceInput)}
-                      className="text-[11px] font-semibold text-[#AD5D3D] hover:underline flex items-center gap-1"
-                    >
-                      <span>{showManualDeviceInput ? "— Hide direct Device ID input" : "+ Enter particular Device ID manually"}</span>
-                    </button>
-                    {showManualDeviceInput && (
-                      <div className="mt-2 space-y-1">
-                        <label className="block text-[11px] font-bold text-[#211C19]">
-                          Particular Device ID:
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="e.g. npg-1a0efef6"
-                          value={manualDeviceId}
-                          onChange={(e) => {
-                            setManualDeviceId(e.target.value);
-                            setSelectedAllocateDeviceId(e.target.value.trim());
-                          }}
-                          className="w-full px-3 py-1.5 text-xs font-mono rounded-lg bg-[#FFFCF7] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
-                        />
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* If picking a patient for a device */}
-              {allocateModalDevice && (
-                <div className="space-y-2">
-                  <label className="block text-xs font-bold text-[#211C19]">
-                    Select Patient to Receive Device:
-                  </label>
-                  {unassignedPatients.length === 0 ? (
-                    <div className="p-4 rounded-xl bg-[#F5ECE6] border border-[#E2C7B8] text-xs space-y-1.5 text-[#76685F]">
-                      <div className="font-bold text-[#211C19]">All Patients Already Have Devices</div>
-                      <p className="text-[11px] leading-relaxed">
-                        Every active patient currently has a bedside hardware gateway linked.
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
-                      {unassignedPatients.map((pt) => {
-                        const isSelected = selectedAllocatePatientCode === pt.patientCode;
-                        return (
-                          <div
-                            key={pt.patientCode}
-                            onClick={() => setSelectedAllocatePatientCode(pt.patientCode)}
-                            className={`p-3 rounded-xl border text-xs cursor-pointer transition flex items-center justify-between gap-3 ${
-                              isSelected
-                                ? "border-[#42765A] bg-[#EDF5F0]/70 ring-1 ring-[#42765A]"
-                                : "border-[#E5D9CA] hover:border-[#AD5D3D]/60 bg-[#FFFCF7]"
-                            }`}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div
-                                className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${
-                                  isSelected ? "bg-[#42765A] text-white" : "bg-[#FAF0E6] text-[#AD5D3D]"
-                                }`}
-                              >
-                                <User className="w-4 h-4" />
-                              </div>
-                              <div>
-                                <div className="font-bold text-[#211C19]">{pt.displayName}</div>
-                                <div className="text-[11px] font-mono text-[#76685F]">
-                                  {pt.patientCode} &bull; Bed: {pt.bedLabel || "Unassigned"}
-                                </div>
-                              </div>
-                            </div>
-                            <div
-                              className={`w-4 h-4 rounded-full border flex items-center justify-center ${
-                                isSelected
-                                  ? "border-[#42765A] bg-[#42765A] text-white"
-                                  : "border-[#D0C2B4] bg-white"
-                              }`}
-                            >
-                              {isSelected && <Check className="w-2.5 h-2.5 stroke-[3]" />}
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-
-            {/* Footer Buttons */}
-            <div className="pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={handleCloseAllocateModal}
-                className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                disabled={
-                  Boolean(
-                    allocatingDevice ||
-                    (allocateModalPatient ? (!(selectedAllocateDeviceId || manualDeviceId) || devices.length === 0) : false) ||
-                    (allocateModalDevice ? (!selectedAllocatePatientCode || unassignedPatients.length === 0) : false)
-                  )
-                }
-                onClick={handleConfirmAllocateDevice}
-                className="px-5 py-2.5 rounded-xl text-xs font-bold bg-[#AD5D3D] hover:bg-[#964F33] text-white transition shadow-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
-              >
-                {allocatingDevice ? (
-                  <>
-                    <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                    <span>Assigning...</span>
-                  </>
-                ) : (
-                  <>
-                    <Link2 className="w-3.5 h-3.5" />
-                    <span>Confirm Device Assignment</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* REGISTER NEW PATIENT & ASSIGN PARTICULAR DEVICE MODAL */}
+      {/* MODAL 1: REGISTER NEW PATIENT & SELECT AVAILABLE BED */}
       {isAddPatientModalOpen && (
-        <div
-          role="dialog"
-          aria-modal="true"
-          className="fixed inset-0 z-50 bg-[#211C19]/50 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto"
-        >
-          <div className="bg-[#FFFCF7] border border-[#E5D9CA] rounded-2xl p-5 sm:p-6 max-w-md w-full shadow-hover animate-in fade-in zoom-in-95 duration-150 space-y-4 my-8">
-            <div className="flex items-start justify-between gap-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-9 h-9 rounded-xl bg-[#FAF0E6] text-[#AD5D3D] flex items-center justify-center border border-[#E2C7B8] shrink-0">
-                  <User className="w-5 h-5" />
-                </div>
-                <div>
-                  <h3 className="font-heading font-bold text-base text-[#211C19]">
-                    Register New Patient
-                  </h3>
-                  <p className="text-[11px] text-[#76685F] font-medium">
-                    Add patient record and assign with a particular hardware device.
-                  </p>
-                </div>
+        <div className="fixed inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+              <div className="flex items-center gap-2">
+                <User className="w-5 h-5 text-[#059669]" />
+                <h3 className="font-bold text-base text-[#0F172A]">Register New Patient</h3>
               </div>
               <button
                 type="button"
                 onClick={() => setIsAddPatientModalOpen(false)}
-                className="text-[#76685F] hover:text-[#211C19] p-1 rounded-lg"
+                className="text-[#64748B] hover:text-[#0F172A]"
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
-            <form onSubmit={handleCreatePatientWithDevice} className="space-y-3.5 pt-1">
+            <form onSubmit={handleInitiatePatientRegistration} className="space-y-4">
               <div>
-                <label className="block text-xs font-bold text-[#211C19] mb-1">
-                  Full Display Name *
+                <label className="block text-xs font-bold text-[#0F172A] mb-1">
+                  Patient Full Name *
                 </label>
                 <input
                   type="text"
@@ -2222,71 +1259,345 @@ export default function NurseDashboardPage() {
                   placeholder="e.g. Ronald Verma"
                   value={newPatientName}
                   onChange={(e) => setNewPatientName(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                  className="w-full px-3 py-2 text-xs rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#0F172A] focus:outline-none focus:border-[#059669]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-[#211C19] mb-1">
-                  Bed Label / Room
+                <label htmlFor="patient-bed-input" className="block text-xs font-bold text-[#0F172A] mb-1">
+                  Enter Hospital Bed Number *
                 </label>
                 <input
+                  id="patient-bed-input"
                   type="text"
-                  placeholder="e.g. Bed 104"
-                  value={newPatientBed}
-                  onChange={(e) => setNewPatientBed(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
+                  required
+                  list="available-beds-registration-list"
+                  placeholder="e.g. ICU-01, BED-04, B-101"
+                  value={newPatientBedNumber}
+                  onChange={(e) => setNewPatientBedNumber(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-xs font-mono font-bold rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#0F172A] focus:outline-none focus:border-[#059669]"
                 />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold text-[#211C19] mb-1">
-                  Assign with Particular Device (Optional)
-                </label>
-                <select
-                  value={newPatientParticularDevice}
-                  onChange={(e) => setNewPatientParticularDevice(e.target.value)}
-                  className="w-full px-3 py-2 text-xs rounded-xl bg-[#F5F1E9] border border-[#E5D9CA] focus:outline-none focus:border-[#AD5D3D] text-[#211C19]"
-                >
-                  <option value="">-- No device (assign later) --</option>
-                  {devices.map((d) => (
-                    <option key={d.deviceId} value={d.deviceId}>
-                      {d.name} ({d.deviceId}) {d.currentAssignment ? `· [Assigned: ${d.currentAssignment.patient?.displayName || "Patient"}]` : "· [Available]"}
+                <datalist id="available-beds-registration-list">
+                  {availableBeds.map((b) => (
+                    <option key={b.bedNumber} value={b.bedNumber}>
+                      {b.bedNumber} {b.ward ? `(${b.ward})` : ""} - AVAILABLE
                     </option>
                   ))}
-                </select>
-                <p className="text-[10px] text-[#76685F] mt-1">
-                  You can pair any registered hardware gateway right now or assign one later.
+                </datalist>
+                <p className="text-[11px] text-[#64748B] mt-1">
+                  Type any bed number or pick an available bed. The bed will be assigned pending patient bedside approval.
                 </p>
               </div>
 
-              <div className="pt-3 border-t border-[#E5D9CA] flex items-center justify-end gap-2">
+              <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-end gap-2.5">
                 <button
                   type="button"
                   onClick={() => setIsAddPatientModalOpen(false)}
-                  className="px-4 py-2 rounded-xl text-xs font-semibold text-[#76685F] hover:bg-[#F5F1E9] transition"
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-[#64748B] hover:text-[#0F172A]"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  disabled={creatingPatient || !newPatientName.trim()}
-                  className="px-4 py-2 rounded-xl text-xs font-bold bg-[#AD5D3D] hover:bg-[#964F33] text-white transition shadow-xs disabled:opacity-50 flex items-center gap-1.5"
+                  disabled={creatingPatient || !newPatientName.trim() || !newPatientBedNumber.trim()}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition disabled:opacity-50 shadow-xs"
                 >
-                  {creatingPatient ? (
-                    <>
-                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                      <span>Creating...</span>
-                    </>
-                  ) : (
-                    <>
-                      <Plus className="w-3.5 h-3.5" />
-                      <span>Register &amp; Assign</span>
-                    </>
-                  )}
+                  {creatingPatient ? "Initiating..." : "Initiate Registration"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: PROPOSE BED CHANGE */}
+      {isBedChangeModalOpen && bedChangePatient && (
+        <div className="fixed inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+              <div className="flex items-center gap-2">
+                <Bed className="w-5 h-5 text-[#2563EB]" />
+                <h3 className="font-bold text-base text-[#0F172A]">Propose Bed Change</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsBedChangeModalOpen(false)}
+                className="text-[#64748B] hover:text-[#0F172A]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmProposeBedChange} className="space-y-4">
+              <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-xs space-y-1">
+                <div>Patient: <strong className="text-[#0F172A]">{bedChangePatient.displayName}</strong> ({bedChangePatient.patientCode})</div>
+                <div>Current Bed: <strong className="text-[#047857] font-mono">{bedChangePatient.bedLabel || "None"}</strong></div>
+                {bedChangePatient.pendingBedLabel && (
+                  <div className="text-[#B45309] font-semibold">Already Pending Proposal: Bed {bedChangePatient.pendingBedLabel}</div>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="propose-bed-input" className="block text-xs font-bold text-[#0F172A] mb-1">
+                  Enter New Hospital Bed Number *
+                </label>
+                <input
+                  id="propose-bed-input"
+                  type="text"
+                  required
+                  list="available-beds-propose-list"
+                  placeholder="e.g. ICU-02, BED-10, C-202"
+                  value={selectedNewBedNumber}
+                  onChange={(e) => setSelectedNewBedNumber(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-xs font-mono font-bold rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#0F172A] focus:outline-none focus:border-[#2563EB]"
+                />
+                <datalist id="available-beds-propose-list">
+                  {availableBeds.map((b) => (
+                    <option key={b.bedNumber} value={b.bedNumber}>
+                      {b.bedNumber} - AVAILABLE
+                    </option>
+                  ))}
+                </datalist>
+                <p className="text-[11px] text-[#64748B] mt-1">
+                  Type any bed number or choose from available beds. Current bed remains active until patient explicitly approves.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setIsBedChangeModalOpen(false)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-[#64748B] hover:text-[#0F172A]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={proposingBed || !selectedNewBedNumber.trim()}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition disabled:opacity-50 shadow-xs"
+                >
+                  {proposingBed ? "Proposing..." : "Propose Bed Assignment"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 3: ALLOCATE DEVICE TO PATIENT (Strict Selection from Registered Devices; Manual ID Removed) */}
+      {allocateModalPatient && (
+        <div className="fixed inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 max-w-lg w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+              <div className="flex items-center gap-2">
+                <Link2 className="w-5 h-5 text-[#059669]" />
+                <h3 className="font-bold text-base text-[#0F172A]">
+                  Allocate Device to {allocateModalPatient.displayName}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseAllocateModal}
+                className="text-[#64748B] hover:text-[#0F172A]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <p className="text-xs text-[#64748B]">
+                Select an available, online NPG device from the registered hardware registry below. Devices must be online to be allocated.
+              </p>
+
+              {/* Devices Selection List */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {devices.length === 0 ? (
+                  <div className="p-4 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-xs text-[#64748B] text-center">
+                    No devices registered. Please commission an NPG device first.
+                  </div>
+                ) : (
+                  devices.map((d) => {
+                    const isOnline = d.connectivityStatus === "ONLINE";
+                    const isAlreadyAssigned = Boolean(d.status === "ASSIGNED" || d.currentAssignment);
+                    const isSelectable = isOnline && !isAlreadyAssigned && d.status === "AVAILABLE";
+                    const isSelected = selectedAllocateDeviceId === d.deviceId;
+
+                    return (
+                      <div
+                        key={d.deviceId}
+                        onClick={() => {
+                          if (isSelectable) setSelectedAllocateDeviceId(d.deviceId);
+                        }}
+                        className={`p-3 rounded-lg border text-xs transition flex items-center justify-between gap-3 ${
+                          !isSelectable
+                            ? "bg-[#F8FAFC] border-[#E2E8F0] opacity-60 cursor-not-allowed"
+                            : isSelected
+                            ? "bg-[#ECFDF5] border-[#10B981] text-[#047857] ring-1 ring-[#059669] cursor-pointer"
+                            : "bg-white border-[#CBD5E1] hover:border-[#059669] cursor-pointer text-[#0F172A]"
+                        }`}
+                      >
+                        <div>
+                          <div className="font-bold flex items-center gap-2">
+                            <span>{d.name || d.deviceId}</span>
+                            <span className="font-mono text-[11px] text-[#64748B]">({d.deviceId})</span>
+                          </div>
+                          <div className="text-[11px] text-[#64748B] mt-0.5">
+                            Hardware ID: <span className="font-mono">{d.hardwareId || "N/A"}</span>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-2">
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                              isOnline
+                                ? "bg-[#ECFDF5] text-[#047857] border border-[#10B981]"
+                                : "bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]"
+                            }`}
+                          >
+                            {isOnline ? "ONLINE" : "OFFLINE"}
+                          </span>
+                          <span
+                            className={`px-2.5 py-0.5 rounded text-[10px] font-bold ${
+                              isAlreadyAssigned
+                                ? "bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE]"
+                                : isSelectable
+                                ? "bg-[#ECFDF5] text-[#047857] border border-[#10B981]"
+                                : "bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]"
+                            }`}
+                          >
+                            {isAlreadyAssigned ? "ASSIGNED" : d.status}
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+
+            <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={handleCloseAllocateModal}
+                className="px-4 py-2 rounded-lg text-xs font-semibold text-[#64748B] hover:text-[#0F172A]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={allocatingDevice || !selectedAllocateDeviceId}
+                onClick={handleConfirmAllocateDevice}
+                className="px-4 py-2 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition disabled:opacity-50 shadow-xs"
+              >
+                {allocatingDevice ? "Allocating..." : "Confirm Allocation"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 4: SEND CARE LINK REQUEST (Nurse enters bed number; Only patient can approve) */}
+      {careLinkModalPatient && (
+        <div className="fixed inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 max-w-md w-full shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3">
+              <div className="flex items-center gap-2">
+                <Shield className="w-5 h-5 text-[#059669]" />
+                <h3 className="font-bold text-base text-[#0F172A]">
+                  Send Care Link Request
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setCareLinkModalPatient(null)}
+                className="text-[#64748B] hover:text-[#0F172A]"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <form onSubmit={handleConfirmSendCareLink} className="space-y-4">
+              <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E2E8F0] text-xs space-y-1">
+                <div>Patient: <strong className="text-[#0F172A]">{careLinkModalPatient.displayName}</strong> ({careLinkModalPatient.patientCode})</div>
+                <div>Current Bed: <strong className="text-[#047857] font-mono">{careLinkModalPatient.bedLabel || "None"}</strong></div>
+              </div>
+
+              <div>
+                <label htmlFor="carelink-bed-number" className="block text-xs font-bold text-[#0F172A] mb-1">
+                  Enter Hospital Bed Number *
+                </label>
+                <input
+                  id="carelink-bed-number"
+                  type="text"
+                  required
+                  list="available-beds-carelink-list"
+                  placeholder="e.g. ICU-01, BED-04, B-102"
+                  value={careLinkBedNumber}
+                  onChange={(e) => setCareLinkBedNumber(e.target.value.toUpperCase())}
+                  className="w-full px-3 py-2 text-xs font-mono font-bold rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] text-[#0F172A] focus:outline-none focus:border-[#059669]"
+                />
+                <datalist id="available-beds-carelink-list">
+                  {availableBeds.map((b) => (
+                    <option key={b.bedNumber} value={b.bedNumber}>
+                      {b.bedNumber} - AVAILABLE
+                    </option>
+                  ))}
+                </datalist>
+                <p className="text-[11px] text-[#64748B] mt-1">
+                  Enter the bed number to assign. Only the patient can approve this care link request at their bedside terminal.
+                </p>
+              </div>
+
+              <div className="pt-2 border-t border-[#E2E8F0] flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setCareLinkModalPatient(null)}
+                  className="px-4 py-2 rounded-lg text-xs font-semibold text-[#64748B] hover:text-[#0F172A]"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={nurseAssignLoading[careLinkModalPatient.patientCode] || !careLinkBedNumber.trim()}
+                  className="px-4 py-2 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition disabled:opacity-50 shadow-xs"
+                >
+                  {nurseAssignLoading[careLinkModalPatient.patientCode] ? "Sending..." : "Send Request to Patient"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* STEP CONFIRMATION MODAL */}
+      {stepConfirm && (
+        <div className="fixed inset-0 z-50 bg-[#0F172A]/40 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white border border-[#E2E8F0] rounded-xl p-5 max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-2.5">
+              <h3 className="font-bold text-sm text-[#0F172A]">{stepConfirm.stepTitle}</h3>
+              <button onClick={() => setStepConfirm(null)} className="text-[#64748B] hover:text-[#0F172A]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-[#475569] leading-relaxed">
+              {stepConfirm.stepDescription}
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setStepConfirm(null)}
+                className="px-3 py-1.5 rounded-lg text-xs font-semibold text-[#64748B] hover:text-[#0F172A]"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={executeStepConfirmation}
+                className={`px-4 py-1.5 rounded-lg text-xs font-bold text-white shadow-xs ${stepConfirm.actionButtonColor}`}
+              >
+                {stepConfirm.actionButtonLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}

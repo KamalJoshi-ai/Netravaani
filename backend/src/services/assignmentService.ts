@@ -3,12 +3,14 @@ import { Device } from "../models/Device.js";
 import { Patient } from "../models/Patient.js";
 import { DeviceAssignment, IDeviceAssignment } from "../models/DeviceAssignment.js";
 import { AppError } from "../middleware/errorHandler.js";
+import { deviceService } from "./deviceService.js";
 
 export interface AssignDeviceDto {
   deviceId: string;
   patientCode: string;
   assignedBy?: string;
   reassign?: boolean;
+  requireOnline?: boolean;
 }
 
 export interface UnassignDeviceDto {
@@ -18,7 +20,7 @@ export interface UnassignDeviceDto {
 
 export class AssignmentService {
   async assignDevice(dto: AssignDeviceDto): Promise<IDeviceAssignment> {
-    const { deviceId, patientCode, assignedBy, reassign } = dto;
+    const { deviceId, patientCode, assignedBy, reassign, requireOnline } = dto;
     const trimmedDeviceId = (deviceId || "").trim();
     const trimmedPatientCode = (patientCode || "").trim();
 
@@ -35,6 +37,17 @@ export class AssignmentService {
 
     if (device.status === "DISABLED") {
       throw new AppError(400, "DEVICE_DISABLED", `Device '${deviceId}' is disabled and cannot be assigned`);
+    }
+
+    if (requireOnline) {
+      const liveConnectivity = deviceService.computeConnectivity(device);
+      if (liveConnectivity !== "ONLINE" && device.connectivityStatus !== "ONLINE") {
+        throw new AppError(
+          400,
+          "DEVICE_NOT_ONLINE",
+          `Nurse cannot allocate device '${deviceId}': device is ${liveConnectivity.toLowerCase()} and must be online before allocating to a patient`
+        );
+      }
     }
 
     // 2. Verify Patient exists and is ACTIVE
@@ -60,45 +73,27 @@ export class AssignmentService {
     }).populate("device", "deviceId name");
 
     if (patientActiveAssignment) {
-      if (reassign) {
-        await DeviceAssignment.findByIdAndUpdate(patientActiveAssignment._id, {
-          isActive: false,
-          unassignedAt: new Date(),
-        });
-        if (patientActiveAssignment.device) {
-          await Device.findByIdAndUpdate((patientActiveAssignment.device as any)._id, {
-            status: "AVAILABLE",
-          });
-        }
-      } else {
-        const assignedDevice = patientActiveAssignment.device as unknown as { deviceId?: string };
-        throw new AppError(
-          409,
-          "PATIENT_ALREADY_ASSIGNED",
-          `Patient '${patientCode}' is already assigned to device '${assignedDevice?.deviceId || "another device"}'`
-        );
-      }
+      const assignedDevice = patientActiveAssignment.device as unknown as { deviceId?: string };
+      throw new AppError(
+        409,
+        "PATIENT_ALREADY_ASSIGNED",
+        `Patient '${patientCode}' already has an active device allocated (${assignedDevice?.deviceId || "another device"}). To switch devices, the existing device must first be explicitly unassigned before a new device can be assigned.`
+      );
     }
 
-    // Check if device is currently assigned to another patient
+    // Check if device is currently assigned to any patient
     const deviceActiveAssignment = await DeviceAssignment.findOne({
       device: device._id,
       isActive: true,
-    });
+    }).populate("patient", "patientCode displayName");
 
-    if (deviceActiveAssignment) {
-      if (reassign) {
-        await DeviceAssignment.findByIdAndUpdate(deviceActiveAssignment._id, {
-          isActive: false,
-          unassignedAt: new Date(),
-        });
-      } else {
-        throw new AppError(
-          409,
-          "DEVICE_ALREADY_ASSIGNED",
-          `A single device can only be allocated to a single patient at a time. Device '${deviceId}' is already allocated to another active patient. Please unassign it first before reallocating.`
-        );
-      }
+    if (deviceActiveAssignment || device.status === "ASSIGNED") {
+      const assignedPatient = deviceActiveAssignment?.patient as unknown as { patientCode?: string };
+      throw new AppError(
+        409,
+        "DEVICE_ALREADY_ASSIGNED",
+        `Device '${deviceId}' is already allocated to ${assignedPatient?.patientCode ? `patient '${assignedPatient.patientCode}'` : "another patient"}. A device cannot be allocated to multiple patients; it must first be explicitly unassigned before it can be assigned to another patient.`
+      );
     }
 
     // 3. Atomically ensure device status is ASSIGNED

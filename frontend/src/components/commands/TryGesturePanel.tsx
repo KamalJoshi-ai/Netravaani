@@ -29,7 +29,7 @@ export default function TryGesturePanel({
   return (
     <section
       aria-labelledby="try-gesture-title"
-      className="rounded-2xl border border-[#CDE2D5] bg-gradient-to-br from-[#FFFCF7] to-[#F2F8F4] p-4 shadow-subtle space-y-3"
+      className="rounded-2xl border border-[#CDE2D5] bg-[#F2F8F4] p-4 shadow-subtle space-y-3"
     >
       <div>
         <h3 id="try-gesture-title" className="font-heading text-sm font-bold text-[#211C19]">

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { AuthProvider } from "@/lib/auth";
+import { ThemeProvider } from "@/lib/theme";
 
 export const metadata: Metadata = {
   title: "NetraVaani",
@@ -14,8 +15,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="bg-[#F5F1E9] text-[#211C19] font-sans antialiased selection:bg-[#AD5D3D]/20 selection:text-[#211C19] min-h-screen">
-        <AuthProvider>{children}</AuthProvider>
+      <body className="bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] font-sans antialiased min-h-screen">
+        <ThemeProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
