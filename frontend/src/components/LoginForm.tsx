@@ -15,7 +15,6 @@ export default function LoginForm() {
   const [signupRole, setSignupRole] = useState<"patient" | "nurse">("patient");
 
   // Form Fields
-  const [name, setName] = useState("");
   const [username, setUsername] = useState("");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
@@ -34,7 +33,6 @@ export default function LoginForm() {
 
     try {
       if (authMode === "signup") {
-        if (!name.trim()) throw new Error("Full name is required");
         const normalizedUsername = username.trim().toLowerCase();
         if (!normalizedUsername) throw new Error("Unique username is required");
         if (!/^[a-zA-Z0-9_-]{3,30}$/.test(normalizedUsername)) {
@@ -45,7 +43,7 @@ export default function LoginForm() {
           throw new Error("Password must be at least 6 characters");
         }
 
-        await register(name.trim(), identifier.trim(), password, signupRole, normalizedUsername);
+        await register(normalizedUsername, identifier.trim(), password, signupRole);
         setSuccessMsg(
           `Account registered for @${normalizedUsername} (${
             signupRole === "patient" ? "Patient" : "Nurse"
@@ -77,7 +75,7 @@ export default function LoginForm() {
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative transition-colors duration-150">
+    <div className="min-h-screen bg-[#F5EFE6] dark:bg-[#050505] text-[#28211B] dark:text-[#F2ECE1] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative transition-colors duration-150">
       {/* Top-Right Theme Toggle */}
       <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
         <ThemeToggle />
@@ -86,23 +84,23 @@ export default function LoginForm() {
       {/* Brand Header */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center space-y-2">
         <div className="flex items-center justify-center gap-2.5">
-          <div className="w-10 h-10 rounded-xl bg-[#059669] text-white flex items-center justify-center font-heading font-black text-sm shadow-xs">
+          <div className="w-10 h-10 rounded-lg bg-[#1D2D38] dark:bg-[#151C20] text-[#FAF6F0] flex items-center justify-center font-serif font-black text-sm shadow-xs border border-[#8C4327]/30">
             NV
           </div>
-          <h1 className="font-heading text-3xl font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight">
-            Netra<span className="font-wordmark font-normal text-[#059669]">Vaani</span>
+          <h1 className="font-serif text-2xl sm:text-3xl font-bold text-[#28211B] dark:text-[#F2ECE1] tracking-tight">
+            Netra<span className="font-serif italic font-normal text-[#8C4327] dark:text-[#D49D4F]">Vaani</span>
           </h1>
         </div>
-        <p className="text-xs sm:text-sm font-medium text-[#64748B] dark:text-[#94A3B8]">
-          Assistive Gaze &amp; Gesture Clinical Platform
+        <p className="text-xs sm:text-sm font-serif text-[#6F6256] dark:text-[#9E9689]">
+          Assistive Gaze &amp; Gesture Clinical Platform &bull; Clinical Station Ledger
         </p>
       </div>
 
       <div className="mt-6 sm:mx-auto sm:w-full sm:max-w-md">
-        <div className="bg-white dark:bg-[#131B2E] py-6 sm:py-7 px-6 sm:px-8 rounded-2xl border border-[#CBD5E1] dark:border-[#1E293B] shadow-card space-y-5">
+        <div className="bg-[#FAF6F0] dark:bg-[#0D0D0E] py-6 sm:py-7 px-6 sm:px-8 rounded-2xl border border-[#DCD2C0] dark:border-[#222226] shadow-card space-y-5">
           
           {/* Main Auth Mode Tabs: Sign In / Sign Up */}
-          <div className="grid grid-cols-2 p-1 bg-[#F8FAFC] dark:bg-[#0B0F19] border border-[#CBD5E1] dark:border-[#1E293B] rounded-xl text-xs font-bold">
+          <div className="grid grid-cols-2 p-1 bg-[#ECE3D4] dark:bg-[#141416] border border-[#DCD2C0] dark:border-[#222226] rounded-xl text-xs font-serif font-semibold">
             <button
               type="button"
               onClick={() => {
@@ -112,8 +110,8 @@ export default function LoginForm() {
               }}
               className={`py-2 rounded-lg transition ${
                 authMode === "login"
-                  ? "bg-white dark:bg-[#1E293B] text-[#0F172A] dark:text-[#F8FAFC] shadow-xs border border-[#CBD5E1] dark:border-[#334155]"
-                  : "text-[#64748B] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-[#F8FAFC]"
+                  ? "bg-[#FAF6F0] dark:bg-[#0D0D0E] text-[#8C4327] dark:text-[#D49D4F] shadow-xs border border-[#DCD2C0] dark:border-[#222226]"
+                  : "text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1]"
               }`}
             >
               Sign In
@@ -127,8 +125,8 @@ export default function LoginForm() {
               }}
               className={`py-2 rounded-lg transition ${
                 authMode === "signup"
-                  ? "bg-[#FFFCF7] text-[#211C19] shadow-xs border border-[#E5D9CA]"
-                  : "text-[#76685F] hover:text-[#211C19]"
+                  ? "bg-[#FAF6F0] dark:bg-[#0D0D0E] text-[#8C4327] dark:text-[#D49D4F] shadow-xs border border-[#DCD2C0] dark:border-[#222226]"
+                  : "text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1]"
               }`}
             >
               Sign Up
@@ -137,17 +135,17 @@ export default function LoginForm() {
 
           {/* Feedback Alerts */}
           {error && (
-            <div className="p-3 bg-[#FEF3F2] border border-[#FECDCA] text-[#B42318] rounded-xl text-xs font-semibold leading-relaxed">
+            <div className="p-3 bg-[#FAEEEE] dark:bg-[#2B1414] border border-[#E8BCBC] dark:border-[#522323] text-[#9E3232] dark:text-[#D95B5B] rounded-xl text-xs font-medium leading-relaxed">
               {error}
             </div>
           )}
 
           {successMsg && (
-            <div className="p-3.5 bg-[#EDF5F0] border border-[#C5DDCF] text-[#42765A] rounded-xl text-xs font-semibold leading-relaxed flex items-start gap-2.5 shadow-xs">
-              <Mail className="w-4 h-4 text-[#42765A] mt-0.5 shrink-0" />
+            <div className="p-3.5 bg-[#EBF3ED] dark:bg-[#132418] border border-[#BCD5C4] dark:border-[#204A2E] text-[#2E6243] dark:text-[#4AA86C] rounded-xl text-xs font-medium leading-relaxed flex items-start gap-2.5 shadow-xs">
+              <Mail className="w-4 h-4 text-[#2E6243] dark:text-[#4AA86C] mt-0.5 shrink-0" />
               <div>
-                <p className="font-bold text-[#211C19]">Please check your email</p>
-                <p className="text-[11px] text-[#42765A] mt-0.5 leading-relaxed">{successMsg}</p>
+                <p className="font-bold text-[#28211B] dark:text-[#F2ECE1]">Please check your email</p>
+                <p className="text-[11px] text-[#2E6243] dark:text-[#4AA86C] mt-0.5 leading-relaxed">{successMsg}</p>
               </div>
             </div>
           )}
@@ -155,7 +153,7 @@ export default function LoginForm() {
           {/* Sign Up Role Selection (Only shown when signing up) */}
           {authMode === "signup" && (
             <div>
-              <label className="block text-[11px] font-bold uppercase tracking-wider text-[#76685F] mb-1.5 text-center">
+              <label className="block text-[11px] font-serif font-semibold uppercase tracking-wider text-[#6F6256] dark:text-[#9E9689] mb-1.5 text-center">
                 Register Account As
               </label>
               <div className="grid grid-cols-2 gap-2">
@@ -165,17 +163,17 @@ export default function LoginForm() {
                     setSignupRole("patient");
                     setError(null);
                   }}
-                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition text-center gap-1 ${
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-serif font-semibold transition text-center gap-1 ${
                     signupRole === "patient"
-                      ? "bg-[#EDF5F0] border-[#42765A] text-[#42765A] shadow-xs ring-1 ring-[#42765A]"
-                      : "bg-[#FFFCF7] border-[#E5D9CA] text-[#76685F] hover:border-[#42765A]/40"
+                      ? "bg-[#EBF3ED] dark:bg-[#132418] border-[#2E6243] text-[#2E6243] dark:text-[#4AA86C] shadow-xs ring-1 ring-[#2E6243]"
+                      : "bg-[#FAF6F0] dark:bg-[#141416] border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689] hover:border-[#8C4327]/40"
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 font-extrabold text-sm">
+                  <div className="flex items-center gap-1.5 font-bold text-sm">
                     <Bed className="w-4 h-4" />
                     <span>Patient</span>
                   </div>
-                  <span className="text-[10px] font-normal text-[#76685F]">
+                  <span className="text-[10px] font-normal text-[#6F6256] dark:text-[#9E9689]">
                     Bedside Gaze Interface
                   </span>
                 </button>
@@ -186,17 +184,17 @@ export default function LoginForm() {
                     setSignupRole("nurse");
                     setError(null);
                   }}
-                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-bold transition text-center gap-1 ${
+                  className={`flex flex-col items-center justify-center p-3 rounded-xl border text-xs font-serif font-semibold transition text-center gap-1 ${
                     signupRole === "nurse"
-                      ? "bg-[#F5ECE6] border-[#AD5D3D] text-[#AD5D3D] shadow-xs ring-1 ring-[#AD5D3D]"
-                      : "bg-[#FFFCF7] border-[#E5D9CA] text-[#76685F] hover:border-[#AD5D3D]/40"
+                      ? "bg-[#ECE3D4] dark:bg-[#141416] border-[#8C4327] text-[#8C4327] dark:text-[#D49D4F] shadow-xs ring-1 ring-[#8C4327]"
+                      : "bg-[#FAF6F0] dark:bg-[#141416] border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689] hover:border-[#8C4327]/40"
                   }`}
                 >
-                  <div className="flex items-center gap-1.5 font-extrabold text-sm">
+                  <div className="flex items-center gap-1.5 font-bold text-sm">
                     <Shield className="w-4 h-4" />
                     <span>Nurse</span>
                   </div>
-                  <span className="text-[10px] font-normal text-[#76685F]">
+                  <span className="text-[10px] font-normal text-[#6F6256] dark:text-[#9E9689]">
                     Clinical Station Desk
                   </span>
                 </button>
@@ -205,44 +203,29 @@ export default function LoginForm() {
           )}
 
           {/* Form */}
-          <form onSubmit={handleSubmit} className="space-y-4">
+          <form onSubmit={handleSubmit} className="space-y-3.5">
             {authMode === "signup" && (
-              <>
-                <div>
-                  <label className="block text-xs font-bold text-[#211C19] mb-1.5">
-                    Full Name
-                  </label>
+              <div>
+                <label className="block text-xs font-serif font-semibold text-[#28211B] dark:text-[#F2ECE1] mb-1 flex items-center justify-between">
+                  <span>Unique Username</span>
+                  <span className="text-[10px] text-[#6F6256] dark:text-[#9E9689] font-normal">Lowercase, 3-30 chars</span>
+                </label>
+                <div className="relative">
+                  <span className="absolute left-3.5 top-2 text-[#6F6256] dark:text-[#9E9689] text-xs sm:text-sm font-semibold select-none">@</span>
                   <input
                     type="text"
                     required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder={signupRole === "patient" ? "e.g. John Doe" : "e.g. Staff Nurse Maya"}
-                    className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value.toLowerCase().trim())}
+                    placeholder={signupRole === "patient" ? "john_doe" : "nurse_maya"}
+                    className="w-full pl-8 pr-3.5 py-2 rounded-xl border border-[#DCD2C0] dark:border-[#222226] bg-[#FAF6F0] dark:bg-[#141416] text-[#28211B] dark:text-[#F2ECE1] placeholder-[#6F6256] text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-[#8C4327] focus:border-[#8C4327] transition"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-bold text-[#211C19] mb-1.5 flex items-center justify-between">
-                    <span>Unique Username</span>
-                    <span className="text-[10px] text-[#76685F] font-normal">Lowercase, 3-30 chars</span>
-                  </label>
-                  <div className="relative">
-                    <span className="absolute left-3.5 top-2.5 text-[#9E9086] text-xs sm:text-sm font-semibold select-none">@</span>
-                    <input
-                      type="text"
-                      required
-                      value={username}
-                      onChange={(e) => setUsername(e.target.value.toLowerCase().trim())}
-                      placeholder={signupRole === "patient" ? "john_doe" : "nurse_maya"}
-                      className="w-full pl-8 pr-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
-                    />
-                  </div>
-                </div>
-              </>
+              </div>
             )}
 
             <div>
-              <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+              <label className="block text-xs font-serif font-semibold text-[#28211B] dark:text-[#F2ECE1] mb-1">
                 {authMode === "signup" ? "Email Address" : "Email or Username"}
               </label>
               <input
@@ -255,12 +238,12 @@ export default function LoginForm() {
                     ? "Enter email address"
                     : "Enter your email or username"
                 }
-                className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition"
+                className="w-full px-3.5 py-2 rounded-xl border border-[#DCD2C0] dark:border-[#222226] bg-[#FAF6F0] dark:bg-[#141416] text-[#28211B] dark:text-[#F2ECE1] placeholder-[#6F6256] text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-[#8C4327] focus:border-[#8C4327] transition"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-bold text-[#211C19] mb-1.5">
+              <label className="block text-xs font-serif font-semibold text-[#28211B] dark:text-[#F2ECE1] mb-1">
                 Password
               </label>
               <div className="relative">
@@ -271,12 +254,12 @@ export default function LoginForm() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="Enter password"
-                  className="w-full px-3.5 py-2.5 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] placeholder-[#9E9086] text-xs sm:text-sm focus:outline-none focus:border-[#AD5D3D] transition pr-16"
+                  className="w-full px-3.5 py-2 rounded-xl border border-[#DCD2C0] dark:border-[#222226] bg-[#FAF6F0] dark:bg-[#141416] text-[#28211B] dark:text-[#F2ECE1] placeholder-[#6F6256] text-xs sm:text-sm focus:outline-none focus:ring-1 focus:ring-[#8C4327] focus:border-[#8C4327] transition pr-14"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword((prev) => !prev)}
-                  className="absolute right-3 top-2.5 text-xs text-[#76685F] hover:text-[#211C19] font-semibold"
+                  className="absolute right-3 top-2 text-xs text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1] font-medium"
                 >
                   {showPassword ? "Hide" : "Show"}
                 </button>
@@ -287,11 +270,7 @@ export default function LoginForm() {
               <button
                 type="submit"
                 disabled={loading}
-                className={`w-full py-3 rounded-xl text-white font-bold text-xs uppercase tracking-wider transition shadow-sm disabled:opacity-50 ${
-                  authMode === "signup" && signupRole === "patient"
-                    ? "bg-[#42765A] hover:bg-[#355F49]"
-                    : "bg-[#AD5D3D] hover:bg-[#964F33]"
-                }`}
+                className="w-full py-2.5 rounded-xl text-white font-serif font-semibold text-xs tracking-wider uppercase transition shadow-xs disabled:opacity-50 bg-[#8C4327] hover:bg-[#73341C] active:bg-[#5C2713]"
               >
                 {loading
                   ? "Processing..."
@@ -303,9 +282,9 @@ export default function LoginForm() {
           </form>
 
           {/* Toggle between Sign In and Sign Up */}
-          <div className="text-center pt-2">
+          <div className="text-center pt-1 border-t border-[#DCD2C0] dark:border-[#222226]">
             {authMode === "login" ? (
-              <p className="text-xs text-[#76685F]">
+              <p className="text-xs text-[#6F6256] dark:text-[#9E9689]">
                 Don&apos;t have an account?{" "}
                 <button
                   type="button"
@@ -314,13 +293,13 @@ export default function LoginForm() {
                     setError(null);
                     setSuccessMsg(null);
                   }}
-                  className="font-bold text-[#AD5D3D] hover:underline"
+                  className="font-serif font-semibold text-[#8C4327] dark:text-[#D49D4F] hover:underline"
                 >
                   Sign Up
                 </button>
               </p>
             ) : (
-              <p className="text-xs text-[#76685F]">
+              <p className="text-xs text-[#6F6256] dark:text-[#9E9689]">
                 Already have an account?{" "}
                 <button
                   type="button"
@@ -329,7 +308,7 @@ export default function LoginForm() {
                     setError(null);
                     setSuccessMsg(null);
                   }}
-                  className="font-bold text-[#AD5D3D] hover:underline"
+                  className="font-serif font-semibold text-[#8C4327] dark:text-[#D49D4F] hover:underline"
                 >
                   Sign In
                 </button>

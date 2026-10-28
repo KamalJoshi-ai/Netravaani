@@ -4,8 +4,8 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import { apiClient, ApiError, CommandRuleItem, DeviceRulesResponse, RuleFieldError } from "@/lib/api";
 import { InfoTip, RangeCell, StatusPill, Switch, useFlipList } from "./controls";
 import TryGesturePanel, { GestureInput } from "./TryGesturePanel";
-import VersionHistory from "./VersionHistory";
 import { SPEECH_PRESETS, buildSentence, speak, speechSupported, speechTemplateFor } from "@/lib/speech";
+import { AlertTriangle } from "@/lib/noIcons";
 import {
   CHANNELS,
   Channel,
@@ -54,7 +54,6 @@ export default function CommandRuleEditor({
   const [armedUid, setArmedUid] = useState<string | null>(null);
   const [advanced, setAdvanced] = useState<Set<string>>(new Set());
   const [confirm, setConfirm] = useState<Confirm>(null);
-  const [showHistory, setShowHistory] = useState(false);
   const [justApplied, setJustApplied] = useState(false);
   const [gesture, setGesture] = useState<GestureInput>({ blinks: 4, left: 0, right: 0, together: false });
   const [flashUid, setFlashUid] = useState<string | null>(null);
@@ -118,7 +117,12 @@ export default function CommandRuleEditor({
     [rules, gesture]
   );
   const matchUid = matchIndex >= 0 ? rules[matchIndex]?.uid : null;
-  const deviceSeenRecently = Boolean(data?.lastSeenAt && now - new Date(data.lastSeenAt).getTime() < OFFLINE_AFTER_MS);
+  const isOnline = Boolean(
+    (data as unknown as { isOnline?: boolean; connectivityStatus?: string })?.isOnline ||
+    (data as unknown as { isOnline?: boolean; connectivityStatus?: string })?.connectivityStatus === "ONLINE" ||
+    (data?.lastSeenAt && now - new Date(data.lastSeenAt).getTime() < OFFLINE_AFTER_MS)
+  );
+  const deviceSeenRecently = isOnline;
 
   // Restart the match glow whenever the matched row changes
   useEffect(() => {
@@ -356,14 +360,14 @@ export default function CommandRuleEditor({
       {/* Header */}
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div>
-          <div className="text-[11px] font-bold uppercase tracking-wider text-[#AD5D3D]">Device commands</div>
-          <h2 className="font-heading text-lg font-bold text-[#211C19]">
-            {variant === "setup" ? "Review the patient's commands" : "Commands"}
+          <div className="text-[11px] font-semibold uppercase tracking-wider text-[#8C4327] dark:text-[#D49D4F]">Device commands</div>
+          <h2 className="text-lg font-serif font-bold text-[#28211B] dark:text-[#F2ECE1]">
+            {variant === "setup" ? "Review Bedside Commands" : "Device Gesture Commands"}
           </h2>
-          <p className="text-xs text-[#76685F] max-w-xl">
+          <p className="text-xs text-[#6F6256] dark:text-[#9E9689] max-w-xl">
             {variant === "setup"
-              ? "These six default commands are already saved for this device as version 1. Accept them as they are, or edit and send a new version."
-              : "Each command is a gesture the patient can make. The device downloads changes over Wi-Fi; no reflash is needed."}
+              ? "These standard calibrated commands are saved as the active configuration. Accept them as-is, or modify them for this patient."
+              : "Calibrated sensor triggers detected by the patient's device. Updating commands replaces the single active configuration over Wi-Fi."}
           </p>
         </div>
         <div className="flex flex-col items-start gap-2 md:items-end">
@@ -378,17 +382,10 @@ export default function CommandRuleEditor({
           <div className="flex gap-2">
             <button
               type="button"
-              aria-expanded={showHistory}
-              onClick={() => setShowHistory((s) => !s)}
-              className="rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-3 py-1.5 text-xs font-bold text-[#76685F] hover:text-[#211C19] hover:border-[#C8BEB4] transition"
-            >
-              Version history
-            </button>
-            <button
-              type="button"
-              disabled={busy}
+              disabled={!isOnline || busy}
               onClick={() => setConfirm({ kind: "reset" })}
-              className="rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-3 py-1.5 text-xs font-bold text-[#76685F] hover:text-[#AD5D3D] hover:border-[#AD5D3D] transition disabled:opacity-40"
+              className="rounded-lg border border-[#DCD2C0] dark:border-[#222226] bg-[#ECE3D4] dark:bg-[#141416] px-3 py-1.5 text-xs font-semibold text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1] transition disabled:opacity-40"
+              title={!isOnline ? "Device is offline. Connect gateway to reset." : "Restore default commands"}
             >
               Reset to defaults
             </button>
@@ -396,20 +393,19 @@ export default function CommandRuleEditor({
         </div>
       </div>
 
-      {showHistory && (
-        <div className="nv-pop-in">
-          <VersionHistory
-            versions={data.versions}
-            appliedVersion={data.appliedConfigVersion}
-            busy={busy}
-            onRevert={(version) => setConfirm({ kind: "revert", version })}
-          />
+      {/* Offline Alert Banner */}
+      {!isOnline && (
+        <div role="alert" className="rounded-xl border border-[#E8BCBC] dark:border-[#522323] bg-[#FAEEEE] dark:bg-[#2B1414] p-3.5 text-xs flex items-center gap-3 text-[#9E3232] dark:text-[#D95B5B]">
+          <AlertTriangle className="w-5 h-5 shrink-0 text-[#9E3232] dark:text-[#D95B5B]" />
+          <div>
+            <strong>Device is Offline (Read-Only):</strong> Command rules cannot be modified or saved while the gateway is offline. The device must be online with active telemetry to receive updated OTA configurations.
+          </div>
         </div>
       )}
 
       {/* Column headings (wide screens) */}
       <div
-        className={`hidden lg:grid ${ROW_GRID} gap-3 px-3 pl-10 text-[10px] font-bold uppercase tracking-wider text-[#76685F]`}
+        className={`hidden lg:grid ${ROW_GRID} gap-3 px-3 pl-10 text-[10px] font-semibold uppercase tracking-wider text-[#68747C] dark:text-[#8FA1B0]`}
         aria-hidden
       >
         <span />
@@ -430,18 +426,23 @@ export default function CommandRuleEditor({
       </datalist>
 
       {/* Rows */}
-      <div ref={listRef} className="relative pl-7 space-y-2.5">
+      <div
+        ref={listRef}
+        className={`relative pl-7 space-y-2.5 ${
+          !isOnline ? "pointer-events-none opacity-60 select-none cursor-not-allowed" : ""
+        }`}
+      >
         <svg aria-hidden className="pointer-events-none absolute left-0 top-0 h-full w-7 overflow-visible">
           {connectors.map((c) => (
-            <g key={c.id} className="nv-pop-in">
+            <g key={c.id}>
               <path
                 d={`M 28 ${c.y1} H ${c.x + 6} Q ${c.x} ${c.y1} ${c.x} ${c.y1 + 6} V ${c.y2 - 6} Q ${c.x} ${c.y2} ${c.x + 6} ${c.y2} H 28`}
                 fill="none"
-                stroke="#B42318"
+                stroke="#B54747"
                 strokeWidth="1.6"
                 strokeDasharray="3 3"
               />
-              <circle cx={c.x} cy={(c.y1 + c.y2) / 2} r="7" fill="#B42318" />
+              <circle cx={c.x} cy={(c.y1 + c.y2) / 2} r="7" fill="#B54747" />
               <text x={c.x} y={(c.y1 + c.y2) / 2 + 3} textAnchor="middle" fontSize="9" fontWeight="700" fill="#fff">
                 {c.id}
               </text>
@@ -498,22 +499,22 @@ export default function CommandRuleEditor({
         <button
           type="button"
           onClick={addRule}
-          disabled={rules.length >= MAX_RULES}
-          className="rounded-xl border border-dashed border-[#C8BEB4] bg-[#FFFCF7] px-4 py-2 text-xs font-bold text-[#AD5D3D] hover:border-[#AD5D3D] hover:bg-[#F5ECE6] transition disabled:opacity-40"
+          disabled={!isOnline || rules.length >= MAX_RULES}
+          className="rounded-xl border border-dashed border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] px-4 py-2 text-xs font-semibold text-[#183A4A] dark:text-[#B9D8D2] hover:border-[#183A4A] transition disabled:opacity-40"
         >
           + Add command
         </button>
-        <span className="text-[11px] text-[#76685F]">
+        <span className="text-[11px] text-[#68747C] dark:text-[#8FA1B0]">
           {rules.length} of {MAX_RULES} commands
         </span>
       </div>
 
       {undo && (
-        <div role="status" className="nv-pop-in ml-7 flex items-center justify-between gap-3 rounded-xl bg-[#211C19] px-4 py-2.5 text-xs text-[#FFFCF7] shadow-hover">
+        <div role="status" className="ml-7 flex items-center justify-between gap-3 rounded-xl bg-[#18212B] px-4 py-2.5 text-xs text-white shadow-lg">
           <span>
             Deleted &ldquo;{undo.rule.displayLabel || undo.rule.label}&rdquo;.
           </span>
-          <button type="button" onClick={undoDelete} className="rounded-md px-2 py-1 font-bold text-[#F5ECE6] underline underline-offset-2 hover:text-white">
+          <button type="button" onClick={undoDelete} className="rounded-md px-2 py-1 font-semibold text-[#B9D8D2] underline underline-offset-2 hover:text-white">
             Undo
           </button>
         </div>
@@ -523,12 +524,12 @@ export default function CommandRuleEditor({
       {(validation.setErrors.length > 0 || validation.setWarnings.length > 0) && (
         <div className="space-y-1.5 pl-7">
           {validation.setErrors.map((m) => (
-            <p key={m} className="rounded-lg border border-[#FECDCA] bg-[#FEF3F2] px-3 py-2 text-xs font-semibold text-[#B42318]">
+            <p key={m} className="rounded-lg border border-[#F2C4C4] bg-[#FDF1F1] px-3 py-2 text-xs font-semibold text-[#B54747]">
               {capitalize(m)}
             </p>
           ))}
           {validation.setWarnings.map((m) => (
-            <p key={m} className="rounded-lg border border-[#F4DFC8] bg-[#FBF3E8] px-3 py-2 text-xs font-semibold text-[#8C4318]">
+            <p key={m} className="rounded-lg border border-[#F0DCBE] bg-[#FBF5EC] px-3 py-2 text-xs font-semibold text-[#A86B24]">
               {m}
             </p>
           ))}
@@ -542,15 +543,17 @@ export default function CommandRuleEditor({
       <TryGesturePanel rules={rules} input={gesture} onChange={setGesture} matchIndex={matchIndex} />
 
       {serverError && (
-        <p role="alert" className="rounded-lg border border-[#FECDCA] bg-[#FEF3F2] px-3 py-2 text-xs font-semibold text-[#B42318]">
+        <p role="alert" className="rounded-lg border border-[#F2C4C4] bg-[#FDF1F1] px-3 py-2 text-xs font-semibold text-[#B54747]">
           {serverError}
         </p>
       )}
 
       {/* Footer actions */}
-      <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#E5D9CA] bg-[#FFFCF7]/95 px-3 py-2.5 backdrop-blur shadow-subtle">
-        <span className={`text-xs font-semibold ${validation.errorCount ? "text-[#B42318]" : dirty ? "text-[#AD5D3D]" : "text-[#76685F]"}`}>
-          {validation.errorCount
+      <div className="sticky bottom-0 -mx-1 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#DFE3DF] dark:border-[#27374D] bg-white/95 dark:bg-[#151E2A]/95 px-3 py-2.5 backdrop-blur shadow-xs">
+        <span className={`text-xs font-semibold ${!isOnline ? "text-[#B54747]" : validation.errorCount ? "text-[#B54747]" : dirty ? "text-[#183A4A] dark:text-[#B9D8D2]" : "text-[#68747C] dark:text-[#8FA1B0]"}`}>
+          {!isOnline
+            ? "Device is offline (read-only)"
+            : validation.errorCount
             ? `Fix ${validation.errorCount} problem${validation.errorCount === 1 ? "" : "s"} before saving`
             : dirty
             ? "Unsaved changes"
@@ -561,7 +564,7 @@ export default function CommandRuleEditor({
             <button
               type="button"
               onClick={onDone}
-              className="rounded-xl border border-[#E5D9CA] px-4 py-2 text-xs font-bold text-[#76685F] hover:text-[#211C19] transition"
+              className="rounded-xl border border-[#DFE3DF] dark:border-[#27374D] px-4 py-2 text-xs font-semibold text-[#68747C] dark:text-[#8FA1B0] hover:text-[#18212B] dark:hover:text-[#F0F4F7] transition"
             >
               {dirty ? "Finish without saving changes" : "Accept & finish"}
             </button>
@@ -569,8 +572,8 @@ export default function CommandRuleEditor({
           <button
             type="button"
             onClick={save}
-            disabled={validation.errorCount > 0 || saving || !dirty}
-            className="rounded-xl bg-[#AD5D3D] px-5 py-2 text-xs font-bold text-white shadow-subtle transition hover:bg-[#964F33] disabled:cursor-not-allowed disabled:opacity-40"
+            disabled={!isOnline || validation.errorCount > 0 || saving || !dirty}
+            className="rounded-xl bg-[#8C4327] hover:bg-[#73341C] text-white px-5 py-2 text-xs font-semibold shadow-xs transition disabled:cursor-not-allowed disabled:opacity-40"
           >
             {saving ? "Saving…" : "Save & send to device"}
           </button>
@@ -579,26 +582,26 @@ export default function CommandRuleEditor({
 
       {/* Confirmation dialog */}
       {confirm && (
-        <div role="dialog" aria-modal="true" aria-labelledby="rules-confirm-title" className="fixed inset-0 z-[70] flex items-center justify-center bg-[#211C19]/45 p-4 backdrop-blur-sm">
-          <div className="nv-pop-in w-full max-w-sm rounded-2xl border border-[#E5D9CA] bg-[#FFFCF7] p-5 shadow-hover space-y-3">
-            <h3 id="rules-confirm-title" className="font-heading text-base font-bold text-[#211C19]">
+        <div role="dialog" aria-modal="true" aria-labelledby="rules-confirm-title" className="fixed inset-0 z-[70] flex items-center justify-center bg-[#18212B]/40 p-4 backdrop-blur-xs">
+          <div className="w-full max-w-sm rounded-2xl border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] p-5 shadow-lg space-y-3">
+            <h3 id="rules-confirm-title" className="text-base font-semibold text-[#18212B] dark:text-[#F0F4F7]">
               {confirm.kind === "alarm" ? "Change the only alarm command?" : confirm.kind === "reset" ? "Reset to the default commands?" : `Re-issue version ${confirm.version}?`}
             </h3>
-            <p className="text-xs leading-relaxed text-[#76685F]">
+            <p className="text-xs leading-relaxed text-[#68747C] dark:text-[#8FA1B0]">
               {confirm.kind === "alarm"
                 ? "This removes or changes the only command that raises the emergency alarm. Make sure the patient and staff know the new gesture."
                 : confirm.kind === "reset"
                 ? "The six default commands will be saved as a new version and sent to the device."
                 : "Its commands will be saved as a new version and sent to the device."}
             </p>
-            <div className="flex justify-end gap-2 pt-1">
-              <button type="button" autoFocus onClick={() => setConfirm(null)} className="rounded-lg border border-[#E5D9CA] px-3 py-1.5 text-xs font-bold text-[#76685F]">
+            <div className="flex justify-end gap-2 pt-1 border-t border-[#DFE3DF] dark:border-[#27374D]">
+              <button type="button" autoFocus onClick={() => setConfirm(null)} className="rounded-lg border border-[#DFE3DF] dark:border-[#27374D] px-3 py-1.5 text-xs font-semibold text-[#68747C] dark:text-[#8FA1B0]">
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={() => (confirm.kind === "alarm" ? doSave() : confirm.kind === "reset" ? doReset() : doRevert(confirm.version))}
-                className={`rounded-lg px-3 py-1.5 text-xs font-bold text-white ${confirm.kind === "alarm" ? "bg-[#B42318] hover:bg-[#912018]" : "bg-[#AD5D3D] hover:bg-[#964F33]"}`}
+                className={`rounded-lg px-3 py-1.5 text-xs font-semibold text-white ${confirm.kind === "alarm" ? "bg-[#B54747] hover:bg-[#8E3232]" : "bg-[#183A4A] hover:bg-[#122C38]"}`}
               >
                 {confirm.kind === "alarm" ? "Save anyway" : "Continue"}
               </button>
@@ -686,16 +689,16 @@ function RuleRow({
       }}
       onDragEnd={onDragEnd}
       onDrop={(e) => e.preventDefault()}
-      className={`nv-rule-card relative overflow-visible rounded-2xl border p-3 shadow-subtle ${
+      className={`relative overflow-visible rounded-2xl border p-3 shadow-xs ${
         hasError
-          ? "border-[#FECDCA] bg-[#FEF3F2]"
-          : "border-[#E5D9CA] bg-[#FAF5F0]"
-      } ${matched ? "nv-rule-match" : ""} ${dragging ? "opacity-60" : ""}`}
+          ? "border-[#F2C4C4] bg-[#FDF1F1] dark:bg-[#241517]"
+          : "border-[#DFE3DF] dark:border-[#27374D] bg-[#EDEFEA]/40 dark:bg-[#0E151E]"
+      } ${matched ? "ring-2 ring-[#287A59]" : ""} ${dragging ? "opacity-60" : ""}`}
     >
       {(rule.alarm || rule.urgent) && (
         <span
           aria-hidden
-          className={`absolute left-0 top-3 bottom-3 w-1 rounded-r-full ${rule.alarm ? "bg-[#B42318]" : "bg-[#AD5D3D]"}`}
+          className={`absolute left-0 top-3 bottom-3 w-1 rounded-r-full ${rule.alarm ? "bg-[#B54747]" : "bg-[#183A4A] dark:bg-[#B9D8D2]"}`}
         />
       )}
 
@@ -716,7 +719,7 @@ function RuleRow({
               onMove(1);
             }
           }}
-          className="hidden lg:grid mt-2 h-7 w-7 place-items-center rounded-lg text-[#9E9086] hover:bg-[#F0EAE1] hover:text-[#211C19] cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D]"
+          className="hidden lg:grid mt-2 h-7 w-7 place-items-center rounded-lg text-[#68747C] dark:text-[#8FA1B0] hover:bg-[#EDEFEA] dark:hover:bg-[#1B2636] hover:text-[#18212B] dark:hover:text-[#F0F4F7] cursor-grab active:cursor-grabbing focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A]"
         >
           <span aria-hidden className="text-sm leading-none tracking-[-2px]">⋮⋮</span>
         </button>
@@ -731,13 +734,13 @@ function RuleRow({
               onChange={(e) => onChange({ label: e.target.value })}
               aria-label={`Command name sent to the device, row ${index + 1}`}
               aria-invalid={fieldError("label")}
-              className={`h-10 w-full rounded-xl border px-3 pr-12 font-heading text-sm font-bold text-[#211C19] focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/25 ${
-                fieldError("label") ? "border-[#B42318] bg-[#FEF3F2]" : "border-[#E5D9CA] bg-[#FFFCF7] focus:border-[#AD5D3D]"
+              className={`h-10 w-full rounded-xl border px-3 pr-12 text-sm font-semibold text-[#18212B] dark:text-[#F0F4F7] focus:outline-none focus:ring-1 focus:ring-[#183A4A]/20 ${
+                fieldError("label") ? "border-[#B54747] bg-[#FDF1F1]" : "border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] focus:border-[#183A4A] dark:focus:border-[#B9D8D2]"
               }`}
             />
             <span
               aria-live="polite"
-              className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono tabular-nums ${rule.label.length >= 36 ? "text-[#AD5D3D]" : "text-[#9E9086]"}`}
+              className={`absolute right-3 top-1/2 -translate-y-1/2 text-[10px] font-mono tabular-nums ${rule.label.length >= 36 ? "text-[#B54747]" : "text-[#68747C] dark:text-[#8FA1B0]"}`}
             >
               {rule.label.length}/40
             </span>
@@ -749,11 +752,11 @@ function RuleRow({
             placeholder="Display name (optional)"
             title="Shown on the dashboard only. Any language or emoji."
             aria-label={`Display name for the dashboard, row ${index + 1}`}
-            className="h-8 w-full rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-3 text-xs text-[#211C19] placeholder-[#9E9086] focus:border-[#AD5D3D] focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/20"
+            className="h-8 w-full rounded-lg border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] px-3 text-xs text-[#18212B] dark:text-[#F0F4F7] placeholder-[#68747C] focus:border-[#183A4A] dark:focus:border-[#B9D8D2] focus:outline-none focus:ring-1 focus:ring-[#183A4A]/20"
           />
           {/* Voice phrase: completes "Patient on bed X ...", dashboard only */}
           <div className="flex items-center gap-1.5">
-            <span className="shrink-0 text-[10px] font-bold uppercase tracking-wider text-[#76685F]">Spoken as</span>
+            <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wider text-[#68747C] dark:text-[#8FA1B0]">Spoken as</span>
             <input
               value={rule.speechTemplate || ""}
               onChange={(e) => onChange({ speechTemplate: e.target.value })}
@@ -762,7 +765,7 @@ function RuleRow({
               placeholder={speechTemplateFor(rule.id, undefined)}
               title='Completes "Patient on bed X ...". {command} is replaced with the command name.'
               aria-label={`Spoken phrase for voice alerts, row ${index + 1}`}
-              className="h-8 min-w-0 flex-1 rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] px-2.5 text-xs text-[#211C19] placeholder-[#9E9086] focus:border-[#AD5D3D] focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/20"
+              className="h-8 min-w-0 flex-1 rounded-lg border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] px-2.5 text-xs text-[#18212B] dark:text-[#F0F4F7] placeholder-[#68747C] focus:border-[#183A4A] dark:focus:border-[#B9D8D2] focus:outline-none focus:ring-1 focus:ring-[#183A4A]/20"
             />
             {speechSupported() && (
               <button
@@ -775,7 +778,7 @@ function RuleRow({
                 }
                 aria-label={`Preview how ${name} is announced`}
                 title={buildSentence("4", speechTemplateFor(rule.id, rule.speechTemplate), rule.displayLabel?.trim() || rule.label)}
-                className="h-8 w-8 shrink-0 grid place-items-center rounded-lg border border-[#E5D9CA] text-[#76685F] hover:text-[#AD5D3D] hover:border-[#E2C7B8] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D]"
+                className="h-8 w-8 shrink-0 grid place-items-center rounded-lg border border-[#DFE3DF] dark:border-[#27374D] text-[#68747C] dark:text-[#8FA1B0] hover:text-[#183A4A] hover:border-[#183A4A] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A]"
               >
                 <svg aria-hidden viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M11 5 6 9H3v6h3l5 4V5z" />
@@ -788,24 +791,24 @@ function RuleRow({
             type="button"
             aria-expanded={advancedOpen}
             onClick={onToggleAdvanced}
-            className="text-[11px] font-semibold text-[#76685F] hover:text-[#AD5D3D]"
+            className="text-[11px] font-semibold text-[#376B70] dark:text-[#B9D8D2] hover:text-[#183A4A]"
           >
             {advancedOpen ? "Hide advanced" : "Advanced"} · <span className="font-mono">{rule.id || "—"}</span>
           </button>
           {advancedOpen && (
-            <div className="nv-pop-in space-y-1">
-              <label className="block text-[10px] uppercase tracking-wider text-[#76685F]">Device id</label>
+            <div className="space-y-1">
+              <label className="block text-[10px] uppercase tracking-wider text-[#68747C] dark:text-[#8FA1B0]">Device id</label>
               <input
                 value={rule.id}
                 maxLength={24}
                 onChange={(e) => onChange({ id: e.target.value.toLowerCase(), idEdited: true })}
                 aria-label={`Device id, row ${index + 1}`}
                 aria-invalid={fieldError("id") || idClash}
-                className={`h-8 w-full rounded-lg border px-3 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-[#AD5D3D]/20 ${
-                  fieldError("id") || idClash ? "border-[#B42318] bg-[#FEF3F2]" : "border-[#E5D9CA] bg-[#FFFCF7] focus:border-[#AD5D3D]"
+                className={`h-8 w-full rounded-lg border px-3 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-[#183A4A]/20 ${
+                  fieldError("id") || idClash ? "border-[#B54747] bg-[#FDF1F1]" : "border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] focus:border-[#183A4A] dark:focus:border-[#B9D8D2]"
                 }`}
               />
-              <p className="text-[10px] text-[#9E9086]">a–z, 0–9, _ or -, up to 24. Generated from the name until you edit it.</p>
+              <p className="text-[10px] text-[#68747C] dark:text-[#8FA1B0]">a–z, 0–9, _ or -, up to 24. Generated from the name until you edit it.</p>
             </div>
           )}
         </div>
@@ -814,7 +817,7 @@ function RuleRow({
         <div className="grid grid-cols-3 gap-2 lg:contents">
           {CHANNELS.map((c) => (
             <div key={c.key} className="space-y-1 lg:space-y-0">
-              <span className="block text-[10px] font-bold uppercase tracking-wider text-[#76685F] lg:hidden">{c.short}</span>
+              <span className="block text-[10px] font-semibold uppercase tracking-wider text-[#68747C] dark:text-[#8FA1B0] lg:hidden">{c.short}</span>
               <RangeCell
                 value={rule[c.key as Channel]}
                 onChange={(r) => onChange({ [c.key]: r } as Partial<EditorRule>)}
@@ -849,7 +852,7 @@ function RuleRow({
             type="button"
             onClick={onDelete}
             aria-label={`Delete ${name}`}
-            className="h-9 w-9 lg:mt-0.5 grid place-items-center rounded-lg text-lg leading-none text-[#9E9086] hover:bg-[#FEF3F2] hover:text-[#B42318] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B42318]"
+            className="h-9 w-9 lg:mt-0.5 grid place-items-center rounded-lg text-lg leading-none text-[#68747C] hover:bg-[#FDF1F1] hover:text-[#B54747] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B54747] transition"
           >
             ×
           </button>
@@ -858,7 +861,7 @@ function RuleRow({
             disabled={index === 0}
             onClick={() => onMove(-1)}
             aria-label={`Move ${name} up`}
-            className="lg:hidden h-9 w-9 grid place-items-center rounded-lg text-[#76685F] hover:bg-[#F0EAE1] disabled:opacity-30"
+            className="lg:hidden h-9 w-9 grid place-items-center rounded-lg text-[#68747C] hover:bg-[#EDEFEA] disabled:opacity-30"
           >
             ↑
           </button>
@@ -867,7 +870,7 @@ function RuleRow({
             disabled={index === total - 1}
             onClick={() => onMove(1)}
             aria-label={`Move ${name} down`}
-            className="lg:hidden h-9 w-9 grid place-items-center rounded-lg text-[#76685F] hover:bg-[#F0EAE1] disabled:opacity-30"
+            className="lg:hidden h-9 w-9 grid place-items-center rounded-lg text-[#68747C] hover:bg-[#EDEFEA] disabled:opacity-30"
           >
             ↓
           </button>
@@ -875,14 +878,14 @@ function RuleRow({
       </div>
 
       {/* Summary, errors, warnings */}
-      <div className="mt-2.5 space-y-1 border-t border-[#E5D9CA]/70 pt-2 lg:ml-[40px]">
-        <p className="text-xs text-[#4A4039]">{describeRule(toCommandRule(rule))}</p>
+      <div className="mt-2.5 space-y-1 border-t border-[#DFE3DF] dark:border-[#27374D] pt-2 lg:ml-[40px]">
+        <p className="text-xs text-[#68747C] dark:text-[#8FA1B0]">{describeRule(toCommandRule(rule))}</p>
         {hasError && (
           <ul id={errId} className="space-y-0.5">
             {issues.map((issue, i) => (
-              <li key={i} className="flex items-center gap-1.5 text-[11px] font-semibold text-[#B42318]">
+              <li key={i} className="flex items-center gap-1.5 text-[11px] font-semibold text-[#B54747]">
                 {issue.conflictId && (
-                  <span className="grid h-4 w-4 place-items-center rounded-full bg-[#B42318] text-[9px] font-bold text-white">{issue.conflictId}</span>
+                  <span className="grid h-4 w-4 place-items-center rounded-full bg-[#B54747] text-[9px] font-bold text-white">{issue.conflictId}</span>
                 )}
                 {capitalize(issue.message)}
                 {issue.partner !== undefined && ` (with row ${issue.partner + 1})`}
@@ -891,7 +894,7 @@ function RuleRow({
           </ul>
         )}
         {warnings.map((w) => (
-          <p key={w} className="text-[11px] font-semibold text-[#8C4318]">
+          <p key={w} className="text-[11px] font-semibold text-[#A86B24]">
             {w}
           </p>
         ))}
@@ -903,7 +906,7 @@ function RuleRow({
 function SwitchCell({ label, tip, children }: { label: string; tip: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center gap-2 lg:block lg:pt-2">
-      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#76685F] lg:hidden">
+      <span className="flex items-center gap-1 text-[11px] font-semibold text-[#68747C] dark:text-[#8FA1B0] lg:hidden">
         {label} <InfoTip label={`About ${label.toLowerCase()}`} text={tip} />
       </span>
       {children}

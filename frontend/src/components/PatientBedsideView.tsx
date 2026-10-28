@@ -1,7 +1,7 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
-import { apiClient, PatientItem, CareRequestItem } from "@/lib/api";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { apiClient, PatientItem, CareRequestItem, CommandRuleItem } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { ThemeToggle } from "@/lib/theme";
 import {
@@ -18,6 +18,72 @@ import {
   Lock,
 } from "@/lib/noIcons";
 
+export interface DisplayGesture {
+  id: string;
+  label: string;
+  displayLabel: string;
+  instruction: string;
+  eogText?: string;
+  emgText?: string;
+  speechPhrase: string;
+  urgent?: boolean;
+  alarm?: boolean;
+}
+
+export const ALL_STANDARD_GESTURES: DisplayGesture[] = [
+  {
+    id: "yes",
+    label: "YES",
+    displayLabel: "YES / Affirmative",
+    instruction: "Blink 2 times and pause to confirm yes or affirmative.",
+    eogText: "2–3 blinks, pause",
+    speechPhrase: 'Station hears: "Patient is saying YES"',
+  },
+  {
+    id: "water",
+    label: "WATER",
+    displayLabel: "Drinking Water",
+    instruction: "Blink 4 or more rapid times to request drinking water.",
+    eogText: "4+ rapid blinks",
+    speechPhrase: 'Station hears: "Patient wants water"',
+  },
+  {
+    id: "no",
+    label: "NO",
+    displayLabel: "NO / Negative",
+    instruction: "Squeeze both hands together firmly once to indicate negative or decline.",
+    emgText: "Both hands paired squeeze once",
+    speechPhrase: 'Station hears: "Patient is saying NO"',
+  },
+  {
+    id: "call_nurse",
+    label: "CALL NURSE",
+    displayLabel: "Call Bedside Nurse",
+    instruction: "Squeeze left hand 3 distinct times to summon attending nurse.",
+    emgText: "Left hand 3 distinct squeezes",
+    urgent: true,
+    speechPhrase: 'Station hears: "Patient is requesting call nurse"',
+  },
+  {
+    id: "adjustment",
+    label: "ADJUSTMENT",
+    displayLabel: "Bed / Posture Adjustment",
+    instruction: "Squeeze right hand 3 distinct times to request bed, back, or pillow adjustment.",
+    emgText: "Right hand 3 distinct squeezes",
+    speechPhrase: 'Station hears: "Patient wants an adjustment"',
+  },
+  {
+    id: "emergency",
+    label: "EMERGENCY / SEVERE PAIN",
+    displayLabel: "Emergency / Severe Pain",
+    instruction: "Squeeze both hands together 3 rapid times for acute emergency & pain alert.",
+    emgText: "Both hands 3+ times together",
+    urgent: true,
+    alarm: true,
+    speechPhrase: 'Station hears: "Patient is in emergency or severe pain"',
+  },
+];
+
 interface PatientBedsideViewProps {
   patientCode?: string;
   onClose?: () => void;
@@ -27,6 +93,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
   const { user, logout } = useAuth();
   const [patient, setPatient] = useState<PatientItem | null>(null);
   const [requests, setRequests] = useState<CareRequestItem[]>([]);
+  const [deviceRules, setDeviceRules] = useState<CommandRuleItem[]>([]);
   const [, setLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
@@ -46,12 +113,22 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
         setPatient(res.data);
         if (res.data.patientCode) {
           try {
-            const reqRes = await apiClient.getCareRequests({ patientCode: res.data.patientCode, limit: 50 });
+            const reqRes = await apiClient.getCareRequests({ patientCode: res.data.patientCode, limit: 100 });
             if (reqRes?.data) {
               setRequests(reqRes.data);
             }
           } catch {
             // silent ignore
+          }
+        }
+        if (res.data.currentAssignment?.device?.deviceId) {
+          try {
+            const rulesRes = await apiClient.getCommandRules(res.data.currentAssignment.device.deviceId);
+            if (rulesRes?.data?.rules && rulesRes.data.rules.length > 0) {
+              setDeviceRules(rulesRes.data.rules);
+            }
+          } catch {
+            // fallback to standard gestures
           }
         }
       }
@@ -70,9 +147,20 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     try {
       const [pRes, rRes] = await Promise.all([
         apiClient.getPatient(code),
-        apiClient.getCareRequests({ patientCode: code, limit: 50 }),
+        apiClient.getCareRequests({ patientCode: code, limit: 100 }),
       ]);
-      if (pRes?.data) setPatient(pRes.data);
+      if (pRes?.data) {
+        setPatient(pRes.data);
+        if (pRes.data.currentAssignment?.device?.deviceId) {
+          apiClient.getCommandRules(pRes.data.currentAssignment.device.deviceId)
+            .then((rulesRes) => {
+              if (rulesRes?.data?.rules && rulesRes.data.rules.length > 0) {
+                setDeviceRules(rulesRes.data.rules);
+              }
+            })
+            .catch(() => {});
+        }
+      }
       if (rRes?.data) setRequests(rRes.data);
       showNotice("Bedside status synchronized successfully");
     } catch {
@@ -112,11 +200,20 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
           }
           if (res.data.patientCode) {
             try {
-              const rRes = await apiClient.getCareRequests({ patientCode: res.data.patientCode, limit: 50 });
+              const rRes = await apiClient.getCareRequests({ patientCode: res.data.patientCode, limit: 100 });
               if (rRes?.data) setRequests(rRes.data);
             } catch {
               // silent ignore
             }
+          }
+          if (res.data.currentAssignment?.device?.deviceId) {
+            apiClient.getCommandRules(res.data.currentAssignment.device.deviceId)
+              .then((rulesRes) => {
+                if (rulesRes?.data?.rules && rulesRes.data.rules.length > 0) {
+                  setDeviceRules(rulesRes.data.rules);
+                }
+              })
+              .catch(() => {});
           }
           setInitialLoading(false);
         } else if (user) {
@@ -244,17 +341,6 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
     }
   };
 
-  if (initialLoading) {
-    return (
-      <div className="min-h-screen bg-[#F8FAFC] flex items-center justify-center p-6 text-[#0F172A]">
-        <div className="flex items-center gap-3 bg-white border border-[#E2E8F0] rounded-xl px-5 py-3 shadow-md">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#2563EB] animate-ping" />
-          <span className="text-sm font-semibold font-sans text-[#0F172A]">Connecting to Patient Dashboard...</span>
-        </div>
-      </div>
-    );
-  }
-
   // Strict Assignment Gating Conditions
   const hasConfirmedBed = Boolean(
     patient?.bedLabel &&
@@ -264,41 +350,85 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
   const assignedDevice = patient?.currentAssignment?.device;
   const hasActiveDevice = Boolean(assignedDevice && assignedDevice.status !== "DISABLED");
   const isCommandsEnabled = hasConfirmedBed && hasActiveDevice;
-
   const hasPendingBedProposal = Boolean(patient?.pendingBedLabel);
   const nurseReq = patient?.nurseAssignment;
 
+  const displayedGestures: DisplayGesture[] = useMemo(() => {
+    if (deviceRules && deviceRules.length > 0) {
+      return deviceRules.map((r) => {
+        let eogText: string | undefined;
+        if (r.eog && (r.eog[0] > 0 || r.eog[1] > 0)) {
+          eogText = r.eog[0] >= 4 ? `${r.eog[0]}+ rapid blinks` : `${r.eog[0]}–${r.eog[1]} blinks, pause`;
+        }
+
+        let emgText: string | undefined;
+        if (r.simultaneous && r.emgLeft && r.emgRight && r.emgLeft[0] > 0 && r.emgRight[0] > 0) {
+          emgText = `Both hands paired (${r.emgLeft[0]} squeeze${r.emgLeft[0] > 1 ? "s" : ""})`;
+        } else if (r.emgLeft && r.emgLeft[0] > 0) {
+          emgText = `Left hand (${r.emgLeft[0]} squeeze${r.emgLeft[0] > 1 ? "s" : ""})`;
+        } else if (r.emgRight && r.emgRight[0] > 0) {
+          emgText = `Right hand (${r.emgRight[0]} squeeze${r.emgRight[0] > 1 ? "s" : ""})`;
+        }
+
+        const instruction = [eogText, emgText].filter(Boolean).join(" and ") || "Firmware-calibrated gesture trigger";
+
+        return {
+          id: r.id || r.label,
+          label: r.label,
+          displayLabel: r.displayLabel?.trim() || r.label,
+          instruction,
+          eogText,
+          emgText,
+          speechPhrase: `Station hears: "${r.speechTemplate || "is saying {command}"}"`,
+          urgent: r.urgent,
+          alarm: r.alarm,
+        };
+      });
+    }
+    return ALL_STANDARD_GESTURES;
+  }, [deviceRules]);
+
+  if (initialLoading) {
+    return (
+      <div className="min-h-screen bg-[#F5EFE6] dark:bg-[#050505] flex items-center justify-center p-6 text-[#28211B] dark:text-[#F2ECE1]">
+        <div className="flex items-center gap-3 bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl px-5 py-3 shadow-xs">
+          <span className="w-2.5 h-2.5 rounded-full bg-[#8C4327] dark:bg-[#D49D4F] animate-pulse" />
+          <span className="text-sm font-serif font-medium text-[#28211B] dark:text-[#F2ECE1]">Connecting to Patient Dashboard...</span>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] flex flex-col font-sans transition-colors duration-150">
-      {/* Top Header - Clean White with Solid Blue Accent */}
-      <header className="border-b border-[#E2E8F0] dark:border-[#1E293B] bg-white dark:bg-[#131B2E] sticky top-0 z-40 shadow-xs">
+    <div className="min-h-screen bg-[#F5EFE6] dark:bg-[#050505] text-[#28211B] dark:text-[#F2ECE1] flex flex-col font-sans transition-colors duration-150">
+      {/* Top Header */}
+      <header className="border-b border-[#DCD2C0] dark:border-[#222226] bg-[#FAF6F0] dark:bg-[#0D0D0E] sticky top-0 z-40 shadow-xs">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           
           {/* Identity & Role Badge */}
           <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-[#2563EB] text-white flex items-center justify-center font-black text-sm shrink-0 shadow-xs">
+            <div className="w-10 h-10 rounded-xl bg-[#1D2D38] dark:bg-[#151C20] text-[#FAF6F0] flex items-center justify-center font-serif font-bold text-sm shrink-0 shadow-xs border border-[#8C4327]/30">
               PT
             </div>
             <div>
               <div className="flex items-center gap-2.5 flex-wrap">
-                <span className="text-lg sm:text-xl font-extrabold text-[#0F172A] dark:text-[#F8FAFC] tracking-tight">
+                <span className="font-serif text-lg sm:text-xl font-bold text-[#28211B] dark:text-[#F2ECE1] tracking-tight">
                   Patient Dashboard
                 </span>
-                {/* Prominent PATIENT Role Label */}
-                <span className="text-xs font-bold px-2.5 py-0.5 rounded-md bg-[#2563EB] text-white tracking-wider uppercase shadow-xs">
+                <span className="text-[11px] font-mono font-semibold px-2.5 py-0.5 rounded-md bg-[#8C4327] text-white tracking-wider uppercase shadow-xs">
                   PATIENT
                 </span>
-                <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded-md bg-[#EFF6FF] dark:bg-[#1E3A8A] text-[#2563EB] dark:text-[#93C5FD] border border-[#BFDBFE] dark:border-[#3B82F6]">
+                <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded-md bg-[#ECE3D4] dark:bg-[#141416] text-[#8C4327] dark:text-[#D49D4F] border border-[#DCD2C0] dark:border-[#222226]">
                   {patient?.patientCode || "PT-ACTIVE"}
                 </span>
               </div>
-              <div className="text-xs text-[#64748B] dark:text-[#94A3B8] font-medium flex items-center gap-2 mt-0.5 flex-wrap">
-                <span>Account: <strong className="text-[#0F172A] dark:text-[#F8FAFC]">{patient?.displayName || user?.name}</strong></span>
+              <div className="text-xs text-[#6F6256] dark:text-[#9E9689] font-normal flex items-center gap-2 mt-0.5 flex-wrap">
+                <span>Account: <strong className="font-serif text-[#28211B] dark:text-[#F2ECE1] font-medium">{patient?.displayName || user?.name}</strong></span>
                 {user?.username && <span>(@{user.username})</span>}
                 <span>&bull;</span>
                 <span className="flex items-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${isCommandsEnabled ? "bg-[#059669]" : "bg-[#D97706]"}`} />
-                  <span className={isCommandsEnabled ? "text-[#059669] dark:text-[#34D399] font-bold" : "text-[#D97706] dark:text-[#FBBF24] font-semibold"}>
+                  <span className={`w-2 h-2 rounded-full ${isCommandsEnabled ? "bg-[#2E6243]" : "bg-[#A36F1C]"}`} />
+                  <span className={isCommandsEnabled ? "text-[#2E6243] dark:text-[#4AA86C] font-serif font-medium" : "text-[#A36F1C] dark:text-[#D49D4F] font-serif font-medium"}>
                     {isCommandsEnabled ? "Commands Operational" : "Awaiting Clinical Assignments"}
                   </span>
                 </span>
@@ -308,17 +438,16 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
           {/* Header Controls */}
           <div className="flex items-center gap-2.5 self-end sm:self-auto flex-wrap">
-            {/* Theme Toggle (Light / Dark) */}
             <ThemeToggle />
 
             <button
               type="button"
               onClick={handleManualRefresh}
               disabled={isRefreshing}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-[#1E293B] border border-[#E2E8F0] dark:border-[#334155] text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-[#F8FAFC] hover:border-[#2563EB] transition shadow-xs"
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-serif font-medium bg-[#ECE3D4] dark:bg-[#141416] border border-[#DCD2C0] dark:border-[#222226] text-[#28211B] dark:text-[#F2ECE1] hover:border-[#8C4327] dark:hover:border-[#D49D4F] transition shadow-xs"
               title="Refresh ledger"
             >
-              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-[#2563EB]" : ""}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? "animate-spin text-[#8C4327] dark:text-[#D49D4F]" : ""}`} />
               <span>{isRefreshing ? "Syncing..." : "Sync"}</span>
             </button>
 
@@ -326,7 +455,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
               <button
                 type="button"
                 onClick={onClose}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-[#0F172A] hover:bg-[#334155] text-white transition shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-[#183A4A] hover:bg-[#122C38] text-white transition shadow-xs"
               >
                 <ArrowLeft className="w-3.5 h-3.5" />
                 <span>Return</span>
@@ -340,7 +469,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                     window.location.href = "/";
                   }
                 }}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold bg-white border border-[#E2E8F0] text-[#64748B] hover:text-[#DC2626] hover:border-[#FCA5A5] hover:bg-[#FEF2F2] transition shadow-xs"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689] hover:text-[#B54747] hover:border-[#F2C4C4] hover:bg-[#FDF1F1] dark:hover:bg-[#1A1A1E] transition shadow-xs"
               >
                 <LogOut className="w-3.5 h-3.5" />
                 <span>Sign out</span>
@@ -354,14 +483,14 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
       {notice && (
         <div className="max-w-7xl mx-auto px-4 sm:px-6 pt-4 w-full">
           <div
-            className={`p-3 rounded-xl text-xs font-semibold leading-relaxed border flex items-center justify-between shadow-xs ${
+            className={`p-3 rounded-xl text-xs font-medium leading-relaxed border flex items-center justify-between shadow-xs ${
               notice.isError
-                ? "bg-[#FEF2F2] border-[#FCA5A5] text-[#B91C1C]"
-                : "bg-[#ECFDF5] border-[#A7F3D0] text-[#047857]"
+                ? "bg-[#FDF1F1] border-[#F2C4C4] text-[#B54747]"
+                : "bg-[#EAF3EF] border-[#BEDECE] text-[#287A59]"
             }`}
           >
             <span>{notice.text}</span>
-            <button onClick={() => setNotice(null)} className="p-1 hover:opacity-75">
+            <button onClick={() => setNotice(null)} className="p-1 hover:opacity-75 transition">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -372,17 +501,17 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 py-6 w-full space-y-6">
 
         {/* SECTION 1: BED STATUS & BED ASSIGNMENT APPROVAL */}
-        <section className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#E2E8F0] pb-4">
+        <section className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DCD2C0] dark:border-[#222226] pb-4">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE] shrink-0">
+              <div className="p-2.5 rounded-xl bg-[#ECE3D4] dark:bg-[#141416] text-[#183A4A] dark:text-[#B9D8D2] border border-[#DCD2C0] dark:border-[#222226] shrink-0">
                 <Bed className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-[#0F172A]">
+                <h2 className="text-base sm:text-lg font-semibold text-[#28211B] dark:text-[#F2ECE1]">
                   Bed Allocation &amp; Assignment
                 </h2>
-                <p className="text-xs text-[#64748B]">
+                <p className="text-xs text-[#6F6256] dark:text-[#9E9689]">
                   Hospital bed registration requires explicit patient authorization before confirmation
                 </p>
               </div>
@@ -390,17 +519,17 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
             <div className="flex items-center gap-2">
               {hasConfirmedBed ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-[#ECFDF5] text-[#047857] border border-[#10B981]">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[#EAF3EF] text-[#287A59] border border-[#BEDECE] dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]">
                   <CheckCircle2 className="w-3.5 h-3.5" />
                   <span>Confirmed: {patient?.bedLabel}</span>
                 </span>
               ) : hasPendingBedProposal ? (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-[#FFFBEB] text-[#B45309] border border-[#F59E0B]">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[#FBF5EC] text-[#A86B24] border border-[#F0DCBE] dark:bg-[#A86B24]/15 dark:border-[#A86B24]/30 dark:text-[#FBBF24]">
                   <AlertTriangle className="w-3.5 h-3.5" />
                   <span>Pending Patient Approval</span>
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]">
+                <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[#ECE3D4] text-[#6F6256] border border-[#DCD2C0] dark:bg-[#141416] dark:border-[#222226] dark:text-[#9E9689]">
                   <span>No Bed Assigned</span>
                 </span>
               )}
@@ -409,15 +538,15 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
           {/* Pending Bed Assignment Banner (Approve / Reject Action) */}
           {hasPendingBedProposal && (
-            <div className="p-4 rounded-xl bg-[#FFFBEB] border border-[#F59E0B] space-y-3">
+            <div className="p-4 rounded-xl bg-[#FBF5EC] dark:bg-[#141416] border border-[#F0DCBE] dark:border-[#222226] space-y-3">
               <div className="flex items-start gap-3">
-                <AlertTriangle className="w-5 h-5 text-[#D97706] shrink-0 mt-0.5" />
+                <AlertTriangle className="w-5 h-5 text-[#A86B24] shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <h3 className="font-bold text-sm text-[#0F172A]">
-                    Proposed Bed Assignment: <span className="text-[#B45309] font-mono text-base font-extrabold">{patient?.pendingBedLabel}</span>
+                  <h3 className="font-semibold text-sm text-[#28211B] dark:text-[#F2ECE1]">
+                    Proposed Bed Assignment: <span className="text-[#A86B24] font-mono text-base font-bold">{patient?.pendingBedLabel}</span>
                   </h3>
-                  <p className="text-xs text-[#475569] leading-relaxed">
-                    Your clinical nurse has proposed Bed <strong>{patient?.pendingBedLabel}</strong>.
+                  <p className="text-xs text-[#6F6256] dark:text-[#9E9689] leading-relaxed">
+                    Your clinical nurse has proposed Bed <strong className="text-[#28211B] dark:text-white">{patient?.pendingBedLabel}</strong>.
                     {hasConfirmedBed
                       ? ` Approving will atomically transfer you from your current bed (${patient?.bedLabel}) to ${patient?.pendingBedLabel}. Declining preserves your existing bed.`
                       : " Explicit patient approval is required to confirm this bed and complete your patient registration."}
@@ -430,7 +559,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   type="button"
                   disabled={actionInProgress !== null}
                   onClick={handleApproveBed}
-                  className="px-4 py-2 rounded-lg text-xs font-bold bg-[#059669] hover:bg-[#047857] text-white transition flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-[#183A4A] hover:bg-[#122C38] dark:bg-[#376B70] dark:hover:bg-[#2A5256] text-white transition flex items-center gap-1.5 disabled:opacity-50 shadow-xs"
                 >
                   <Check className="w-4 h-4" />
                   <span>{actionInProgress === "approve_bed" ? "Approving..." : `Approve Bed ${patient?.pendingBedLabel}`}</span>
@@ -439,7 +568,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   type="button"
                   disabled={actionInProgress !== null}
                   onClick={handleRejectBed}
-                  className="px-4 py-2 rounded-lg text-xs font-bold bg-white border border-[#DC2626] text-[#DC2626] hover:bg-[#FEF2F2] transition disabled:opacity-50"
+                  className="px-4 py-2 rounded-lg text-xs font-semibold bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#B54747] text-[#B54747] hover:bg-[#FDF1F1] dark:hover:bg-[#1A1A1E] transition disabled:opacity-50"
                 >
                   {actionInProgress === "reject_bed" ? "Declining..." : "Decline"}
                 </button>
@@ -449,33 +578,33 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
 
           {/* Confirmed Bed Details Summary */}
           {!hasPendingBedProposal && hasConfirmedBed && (
-            <div className="p-3.5 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex items-center justify-between text-xs">
-              <div className="flex items-center gap-2 text-[#475569]">
-                <CheckCircle2 className="w-4 h-4 text-[#059669]" />
-                <span>Current Confirmed Bed: <strong className="text-[#0F172A] font-mono">{patient?.bedLabel}</strong></span>
+            <div className="p-3.5 rounded-xl bg-[#ECE3D4]/50 dark:bg-[#050505] border border-[#DCD2C0] dark:border-[#222226] flex items-center justify-between text-xs">
+              <div className="flex items-center gap-2 text-[#6F6256] dark:text-[#9E9689]">
+                <CheckCircle2 className="w-4 h-4 text-[#287A59]" />
+                <span>Current Confirmed Bed: <strong className="text-[#28211B] dark:text-[#F2ECE1] font-mono">{patient?.bedLabel}</strong></span>
               </div>
-              <span className="text-[11px] font-mono font-bold text-[#047857] bg-[#ECFDF5] border border-[#A7F3D0] px-2.5 py-0.5 rounded">
+              <span className="text-[11px] font-mono font-semibold text-[#287A59] bg-[#EAF3EF] border border-[#BEDECE] px-2.5 py-0.5 rounded dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]">
                 OCCUPIED &bull; ACTIVE
               </span>
             </div>
           )}
 
-          {/* Nurse Link Authorization Banner if pending (Only patient can approve) */}
+          {/* Nurse Link Authorization Banner if pending */}
           {nurseReq?.status === "PENDING" && (
-            <div className="p-4 rounded-xl bg-[#EFF6FF] border border-[#2563EB] space-y-3">
+            <div className="p-4 rounded-xl bg-[#EAF0F3] dark:bg-[#141416] border border-[#C2D4DC] dark:border-[#222226] space-y-3">
               <div className="flex items-start gap-3">
-                <Shield className="w-5 h-5 text-[#2563EB] shrink-0 mt-0.5" />
+                <Shield className="w-5 h-5 text-[#183A4A] dark:text-[#B9D8D2] shrink-0 mt-0.5" />
                 <div className="space-y-1">
-                  <h3 className="font-bold text-sm text-[#0F172A] flex items-center gap-2">
+                  <h3 className="font-semibold text-sm text-[#28211B] dark:text-[#F2ECE1] flex items-center gap-2">
                     <span>Care Link Request from Nurse: {nurseReq.nurseName || "Staff Nurse"}</span>
-                    <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-[#DBEAFE] text-[#1D4ED8] border border-[#BFDBFE]">
+                    <span className="px-2 py-0.5 rounded text-[10px] font-semibold bg-[#ECE3D4] text-[#183A4A] dark:bg-[#141416] dark:text-[#B9D8D2] border border-[#DCD2C0] dark:border-[#222226]">
                       AWAITING PATIENT APPROVAL
                     </span>
                   </h3>
-                  <p className="text-xs text-[#475569] leading-relaxed">
+                  <p className="text-xs text-[#6F6256] dark:text-[#9E9689] leading-relaxed">
                     Nurse <strong>{nurseReq.nurseName}</strong> has sent a care link request to connect with your bedside station
                     {patient?.pendingBedLabel ? (
-                      <> for bed <strong className="font-mono text-[#0F172A]">{patient.pendingBedLabel}</strong></>
+                      <> for bed <strong className="font-mono text-[#28211B] dark:text-white">{patient.pendingBedLabel}</strong></>
                     ) : null}
                     . Only you (the patient) can approve this request.
                   </p>
@@ -486,7 +615,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   type="button"
                   disabled={actionInProgress !== null}
                   onClick={handleApproveNurse}
-                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-[#2563EB] hover:bg-[#1D4ED8] text-white transition flex items-center gap-1 shadow-xs"
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-semibold bg-[#183A4A] hover:bg-[#122C38] dark:bg-[#376B70] dark:hover:bg-[#2A5256] text-white transition flex items-center gap-1 shadow-xs"
                 >
                   <Check className="w-3.5 h-3.5" />
                   <span>{actionInProgress === "approve_nurse" ? "Approving..." : "Approve Care Request"}</span>
@@ -495,7 +624,7 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
                   type="button"
                   disabled={actionInProgress !== null}
                   onClick={handleRejectNurse}
-                  className="px-3.5 py-1.5 rounded-lg text-xs font-bold bg-white border border-[#CBD5E1] text-[#64748B] hover:text-[#DC2626] hover:border-[#FCA5A5] transition"
+                  className="px-3.5 py-1.5 rounded-lg text-xs font-medium bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689] hover:text-[#B54747] hover:border-[#F2C4C4] transition"
                 >
                   Decline
                 </button>
@@ -505,257 +634,264 @@ export default function PatientBedsideView({ patientCode: propCode, onClose }: P
         </section>
 
         {/* SECTION 2: ALLOCATED NPG DEVICE STATUS */}
-        <section className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
-          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3.5">
+        <section className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex items-center justify-between border-b border-[#DCD2C0] dark:border-[#222226] pb-3.5">
             <div className="flex items-center gap-3">
-              <div className="p-2.5 rounded-xl bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE] shrink-0">
+              <div className="p-2.5 rounded-xl bg-[#ECE3D4] dark:bg-[#141416] text-[#183A4A] dark:text-[#B9D8D2] border border-[#DCD2C0] dark:border-[#222226] shrink-0">
                 <Radio className="w-5 h-5" />
               </div>
               <div>
-                <h2 className="text-base sm:text-lg font-bold text-[#0F172A]">
+                <h2 className="text-base sm:text-lg font-semibold text-[#28211B] dark:text-[#F2ECE1]">
                   NPG Assistive Device Allocation
                 </h2>
-                <p className="text-xs text-[#64748B]">
+                <p className="text-xs text-[#6F6256] dark:text-[#9E9689]">
                   Strict 1-to-1 bedside hardware gateway assignment
                 </p>
               </div>
             </div>
 
             {hasActiveDevice ? (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-[#ECFDF5] text-[#047857] border border-[#10B981]">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[#EAF3EF] text-[#287A59] border border-[#BEDECE] dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]">
                 <CheckCircle2 className="w-3.5 h-3.5" />
                 <span>DEVICE ALLOCATED</span>
               </span>
             ) : (
-              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-bold bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1]">
+              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-semibold bg-[#ECE3D4] text-[#6F6256] border border-[#DCD2C0] dark:bg-[#141416] dark:border-[#222226] dark:text-[#9E9689]">
                 <span>NO DEVICE ASSIGNED</span>
               </span>
             )}
           </div>
 
           {hasActiveDevice && assignedDevice ? (
-            <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="p-4 rounded-xl bg-[#ECE3D4]/40 dark:bg-[#050505] border border-[#DCD2C0] dark:border-[#222226] flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
-                <div className="text-sm font-bold text-[#0F172A]">
-                  Gateway: <span className="font-mono text-[#2563EB]">{assignedDevice.name || assignedDevice.deviceId}</span>
+                <div className="text-sm font-semibold text-[#28211B] dark:text-[#F2ECE1]">
+                  Gateway: <span className="font-mono text-[#183A4A] dark:text-[#B9D8D2]">{assignedDevice.name || assignedDevice.deviceId}</span>
                 </div>
-                <div className="text-xs text-[#64748B] mt-0.5">
-                  ID: <span className="font-mono">{assignedDevice.deviceId}</span> &bull; Status: <span className="text-[#047857] font-bold">{assignedDevice.status}</span> &bull; Telemetry: <span className="text-[#2563EB] font-bold">{assignedDevice.connectivityStatus || "ONLINE"}</span>
+                <div className="text-xs text-[#6F6256] dark:text-[#9E9689] mt-0.5">
+                  ID: <span className="font-mono">{assignedDevice.deviceId}</span> &bull; Status: <span className="text-[#287A59] font-medium">{assignedDevice.status}</span> &bull; Telemetry: <span className="text-[#376B70] dark:text-[#B9D8D2] font-medium">{assignedDevice.connectivityStatus || "ONLINE"}</span>
                 </div>
               </div>
               <div className="flex items-center gap-2 text-xs">
-                <span className="px-2.5 py-1 rounded bg-[#ECFDF5] border border-[#10B981] text-[#047857] font-bold">
+                <span className="px-2.5 py-1 rounded bg-[#EAF3EF] border border-[#BEDECE] text-[#287A59] font-medium dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]">
                   Operational
                 </span>
               </div>
             </div>
           ) : (
-            <div className="p-4 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs text-[#B45309] space-y-1">
-              <div className="font-bold flex items-center gap-2 text-[#92400E]">
-                <AlertTriangle className="w-4 h-4 text-[#D97706]" />
+            <div className="p-4 rounded-xl bg-[#FBF5EC] dark:bg-[#141416] border border-[#F0DCBE] dark:border-[#222226] text-xs text-[#A86B24] space-y-1">
+              <div className="font-semibold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-[#A86B24]" />
                 <span>No NPG Gateway Assigned Yet</span>
               </div>
-              <p className="text-[11px] leading-relaxed text-[#78350F]">
+              <p className="text-[11px] leading-relaxed text-[#6F6256] dark:text-[#9E9689]">
                 Bedside gaze &amp; gesture triggers require an active NPG hardware device. Please ask your attending nurse to allocate an available online device to your bedside.
               </p>
             </div>
           )}
         </section>
 
-        {/* SECTION 3: BEDSIDE GAZE & GESTURE COMMANDS (Gated until bed confirmed AND device assigned) */}
-        <section className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
-          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3.5">
+        {/* SECTION 3: BEDSIDE GAZE & GESTURE COMMANDS */}
+        <section className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DCD2C0] dark:border-[#222226] pb-3.5">
             <div>
-              <h2 className="text-base sm:text-lg font-bold text-[#0F172A]">
-                Bedside Gaze &amp; Gesture Commands
-              </h2>
-              <p className="text-xs text-[#64748B]">
-                Firmware-calibrated triggers detected by bedside sensors (Display Matrix)
+              <div className="flex items-center gap-2">
+                <h2 className="text-base sm:text-lg font-serif font-bold text-[#28211B] dark:text-[#F2ECE1]">
+                  Bedside Gaze &amp; Gesture Commands
+                </h2>
+                <span className="text-[11px] font-mono font-bold px-2 py-0.5 rounded bg-[#ECE3D4] dark:bg-[#141416] text-[#8C4327] dark:text-[#D49D4F] border border-[#DCD2C0] dark:border-[#222226]">
+                  {displayedGestures.length} Total Gestures
+                </span>
+              </div>
+              <p className="text-xs text-[#6F6256] dark:text-[#9E9689] mt-0.5">
+                Calibrated sensor triggers detected by EOG forehead blinks &amp; wrist EMG sensors
               </p>
             </div>
 
             {isCommandsEnabled ? (
-              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-[#ECFDF5] text-[#047857] border border-[#10B981] flex items-center gap-1.5">
+              <span className="px-2.5 py-1 rounded-md text-xs font-semibold bg-[#EAF3EF] text-[#287A59] border border-[#BEDECE] flex items-center gap-1.5 dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80] self-start sm:self-auto">
                 <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Commands Active</span>
+                <span>Commands Active &bull; Live Telemetry</span>
               </span>
             ) : (
-              <span className="px-2.5 py-1 rounded-md text-xs font-bold bg-[#F1F5F9] text-[#64748B] border border-[#CBD5E1] flex items-center gap-1.5">
+              <span className="px-2.5 py-1 rounded-md text-xs font-medium bg-[#ECE3D4] text-[#6F6256] border border-[#DCD2C0] flex items-center gap-1.5 dark:bg-[#141416] dark:border-[#222226] dark:text-[#9E9689] self-start sm:self-auto">
                 <Lock className="w-3.5 h-3.5" />
-                <span>Commands Locked</span>
+                <span>Commands Locked (Previewing Gestures)</span>
               </span>
             )}
           </div>
 
-          {isCommandsEnabled ? (
-            /* Active Colorful Commands Grid - Solid Colors, No Gradients */
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
-              {/* YES - Solid Emerald Green */}
-              <div className="p-4 rounded-xl border border-[#A7F3D0] bg-[#ECFDF5] space-y-1.5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-[#047857]">
-                    YES / Affirmative
-                  </span>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#059669] text-white">
-                    [cmd] YES
-                  </span>
-                </div>
-                <p className="text-xs text-[#065F46] font-medium">2 blinks, pause</p>
+          {/* Prerequisite status notice if commands are locked */}
+          {!isCommandsEnabled && (
+            <div className="p-4 rounded-xl bg-[#ECE3D4]/40 dark:bg-[#141416]/60 border border-[#DCD2C0] dark:border-[#222226] space-y-3">
+              <div className="flex items-center gap-2 text-xs font-semibold text-[#8C4327] dark:text-[#D49D4F]">
+                <Lock className="w-4 h-4" />
+                <span>Commands Activation Prerequisites (Reference Mode)</span>
               </div>
-
-              {/* WATER - Solid Blue */}
-              <div className="p-4 rounded-xl border border-[#BFDBFE] bg-[#EFF6FF] space-y-1.5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-[#1D4ED8]">
-                    Drinking Water
-                  </span>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#2563EB] text-white">
-                    [cmd] WATER
-                  </span>
-                </div>
-                <p className="text-xs text-[#1E40AF] font-medium">4+ rapid blinks</p>
-              </div>
-
-              {/* NO - Solid Slate/Neutral */}
-              <div className="p-4 rounded-xl border border-[#CBD5E1] bg-[#F1F5F9] space-y-1.5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-[#334155]">
-                    NO / Negative
-                  </span>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#475569] text-white">
-                    [cmd] NO
-                  </span>
-                </div>
-                <p className="text-xs text-[#475569] font-medium">Squeeze both hands once</p>
-              </div>
-
-              {/* CALL NURSE - Solid Amber/Orange */}
-              <div className="p-4 rounded-xl border border-[#FDE68A] bg-[#FFFBEB] space-y-1.5 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-[#B45309]">
-                    CALL NURSE
-                  </span>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#D97706] text-white">
-                    [cmd] CALL NURSE
-                  </span>
-                </div>
-                <p className="text-xs text-[#92400E] font-medium">Squeeze left hand 3 times</p>
-              </div>
-
-              {/* EMERGENCY - Solid Red */}
-              <div className="p-4 rounded-xl border border-[#FECACA] bg-[#FEF2F2] space-y-1.5 col-span-1 sm:col-span-2 lg:col-span-1 shadow-xs">
-                <div className="flex items-center justify-between">
-                  <span className="font-extrabold text-sm text-[#B91C1C] flex items-center gap-1.5">
-                    <AlertTriangle className="w-4 h-4 text-[#DC2626]" />
-                    <span>EMERGENCY / PAIN</span>
-                  </span>
-                  <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-[#DC2626] text-white">
-                    PRIORITY
-                  </span>
-                </div>
-                <p className="text-xs text-[#991B1B] font-medium">Squeeze both hands 3 times (Acute alert)</p>
-              </div>
-            </div>
-          ) : (
-            /* Clear Empty / Locked State */
-            <div className="p-6 rounded-xl bg-[#F8FAFC] border border-[#E2E8F0] text-center space-y-3">
-              <div className="w-12 h-12 rounded-xl bg-[#E2E8F0] text-[#64748B] flex items-center justify-center mx-auto">
-                <Lock className="w-6 h-6" />
-              </div>
-              <div className="space-y-1 max-w-md mx-auto">
-                <h3 className="text-sm font-bold text-[#0F172A]">
-                  Bedside Commands Currently Disabled
-                </h3>
-                <p className="text-xs text-[#64748B] leading-relaxed">
-                  Bedside gaze and gesture commands remain disabled until both prerequisites are completed:
-                </p>
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg mx-auto text-left pt-2">
-                <div className={`p-3 rounded-lg border text-xs ${hasConfirmedBed ? "bg-[#ECFDF5] border-[#A7F3D0] text-[#047857]" : "bg-white border-[#E2E8F0] text-[#64748B]"}`}>
-                  <div className="font-bold flex items-center gap-1.5">
-                    {hasConfirmedBed ? <Check className="w-3.5 h-3.5 text-[#059669]" /> : <X className="w-3.5 h-3.5 text-[#DC2626]" />}
-                    <span>1. Confirmed Bed Assignment</span>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                <div className={`p-2.5 rounded-lg border ${hasConfirmedBed ? "bg-[#EAF3EF] border-[#BEDECE] text-[#287A59] dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]" : "bg-[#FAF6F0] dark:bg-[#0D0D0E] border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689]"}`}>
+                  <div className="font-serif font-semibold flex items-center gap-1.5">
+                    {hasConfirmedBed ? <Check className="w-3.5 h-3.5 text-[#287A59]" /> : <X className="w-3.5 h-3.5 text-[#B54747]" />}
+                    <span>1. Hospital Bed Confirmation</span>
                   </div>
-                  <div className="text-[11px] mt-1 text-[#475569]">
-                    {hasConfirmedBed
-                      ? `Confirmed (${patient?.bedLabel})`
-                      : hasPendingBedProposal
-                      ? `Bed ${patient?.pendingBedLabel} pending your approval above`
-                      : "No bed assigned by nurse"}
+                  <div className="text-[11px] mt-0.5">
+                    {hasConfirmedBed ? `Confirmed on Bed ${patient?.bedLabel}` : "Requires approved bed assignment by nurse"}
                   </div>
                 </div>
 
-                <div className={`p-3 rounded-lg border text-xs ${hasActiveDevice ? "bg-[#ECFDF5] border-[#A7F3D0] text-[#047857]" : "bg-white border-[#E2E8F0] text-[#64748B]"}`}>
-                  <div className="font-bold flex items-center gap-1.5">
-                    {hasActiveDevice ? <Check className="w-3.5 h-3.5 text-[#059669]" /> : <X className="w-3.5 h-3.5 text-[#DC2626]" />}
-                    <span>2. Active NPG Device Link</span>
+                <div className={`p-2.5 rounded-lg border ${hasActiveDevice ? "bg-[#EAF3EF] border-[#BEDECE] text-[#287A59] dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]" : "bg-[#FAF6F0] dark:bg-[#0D0D0E] border-[#DCD2C0] dark:border-[#222226] text-[#6F6256] dark:text-[#9E9689]"}`}>
+                  <div className="font-serif font-semibold flex items-center gap-1.5">
+                    {hasActiveDevice ? <Check className="w-3.5 h-3.5 text-[#287A59]" /> : <X className="w-3.5 h-3.5 text-[#B54747]" />}
+                    <span>2. NPG Hardware Gateway Link</span>
                   </div>
-                  <div className="text-[11px] mt-1 text-[#475569]">
-                    {hasActiveDevice
-                      ? `Assigned (${assignedDevice?.deviceId})`
-                      : "No NPG device allocated to patient"}
+                  <div className="text-[11px] mt-0.5">
+                    {hasActiveDevice ? `Linked to ${assignedDevice?.name || assignedDevice?.deviceId}` : "Nurse must allocate an online NPG device"}
                   </div>
                 </div>
               </div>
-            </div>
-          )}
-        </section>
-
-        {/* SECTION 4: RECENT CARE CALLS HISTORY */}
-        <section className="bg-white border border-[#E2E8F0] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
-          <div className="flex items-center justify-between border-b border-[#E2E8F0] pb-3.5">
-            <div>
-              <h2 className="text-base sm:text-lg font-bold text-[#0F172A]">
-                My Care Request Ledger
-              </h2>
-              <p className="text-xs text-[#64748B]">
-                Real-time tracking of calls and gestures transmitted to the nurse station
+              <p className="text-[11px] text-[#6F6256] dark:text-[#9E9689]">
+                All gestures below are calibrated and will instantly become functional once both prerequisites are confirmed.
               </p>
             </div>
-            <span className="text-xs font-mono font-bold px-2.5 py-0.5 rounded bg-[#EFF6FF] text-[#2563EB] border border-[#BFDBFE]">
-              {requests.length} Total
-            </span>
+          )}
+
+          {/* ALL GESTURES GRID */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3.5">
+            {displayedGestures.map((r) => {
+              const isAlarm = Boolean(r.alarm);
+              const isUrgent = Boolean(r.urgent);
+
+              return (
+                <div
+                  key={r.id || r.label}
+                  className={`p-4 rounded-xl border space-y-2.5 transition shadow-xs flex flex-col justify-between ${
+                    isAlarm
+                      ? "border-[#F2C4C4] dark:border-[#B54747]/40 bg-[#FDF1F1]/70 dark:bg-[#201012]"
+                      : isUrgent
+                      ? "border-[#F0DCBE] dark:border-[#A86B24]/40 bg-[#FBF5EC]/70 dark:bg-[#1C160F]"
+                      : "border-[#DCD2C0] dark:border-[#222226] bg-[#FAF6F0] dark:bg-[#0D0D0E] hover:border-[#8C4327]/50"
+                  }`}
+                >
+                  <div className="space-y-1.5">
+                    {/* Header: Label and Command Badge */}
+                    <div className="flex items-center justify-between gap-2">
+                      <span
+                        className={`font-serif font-bold text-sm ${
+                          isAlarm
+                            ? "text-[#B54747] dark:text-[#F87171] flex items-center gap-1.5"
+                            : isUrgent
+                            ? "text-[#A86B24] dark:text-[#FBBF24]"
+                            : "text-[#28211B] dark:text-[#F2ECE1]"
+                        }`}
+                      >
+                        {isAlarm && <AlertTriangle className="w-4 h-4 text-[#B54747] shrink-0" />}
+                        <span>{r.displayLabel || r.label}</span>
+                      </span>
+                      <span
+                        className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded ${
+                          isAlarm
+                            ? "bg-[#B54747] text-white"
+                            : isUrgent
+                            ? "bg-[#A86B24] text-white"
+                            : "bg-[#ECE3D4] dark:bg-[#141416] text-[#6F6256] dark:text-[#9E9689] border border-[#DCD2C0] dark:border-[#222226]"
+                        }`}
+                      >
+                        [cmd] {r.label}
+                      </span>
+                    </div>
+
+                    {/* Plain English How-To Instruction */}
+                    <p className="text-xs text-[#28211B] dark:text-[#F2ECE1] font-medium leading-relaxed">
+                      {r.instruction}
+                    </p>
+                  </div>
+
+                  {/* Technical Sensor Metrics & Speech Phrase */}
+                  <div className="pt-2 border-t border-[#DCD2C0]/60 dark:border-[#222226] space-y-1.5">
+                    <div className="flex items-center gap-1.5 flex-wrap text-[10px] font-mono">
+                      {r.eogText && (
+                        <span className="px-1.5 py-0.5 rounded bg-[#ECE3D4] dark:bg-[#141416] text-[#376B70] dark:text-[#B9D8D2] border border-[#DCD2C0] dark:border-[#222226]">
+                          Forehead: {r.eogText}
+                        </span>
+                      )}
+                      {r.emgText && (
+                        <span className="px-1.5 py-0.5 rounded bg-[#ECE3D4] dark:bg-[#141416] text-[#8C4327] dark:text-[#D49D4F] border border-[#DCD2C0] dark:border-[#222226]">
+                          Wrist EMG: {r.emgText}
+                        </span>
+                      )}
+                      {isAlarm && (
+                        <span className="px-1.5 py-0.5 rounded bg-[#FAEEEE] dark:bg-[#2B1414] text-[#9E3232] dark:text-[#D95B5B] border border-[#E8BCBC] dark:border-[#522323] font-bold">
+                          ALARM FLASH
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[11px] text-[#6F6256] dark:text-[#9E9689] italic">
+                      {r.speechPhrase}
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* SECTION 4: MY CARE REQUEST LEDGER */}
+        <section className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 sm:p-6 space-y-4 shadow-xs">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#DCD2C0] dark:border-[#222226] pb-3.5">
+            <div>
+              <h2 className="text-base sm:text-lg font-serif font-bold text-[#28211B] dark:text-[#F2ECE1]">
+                My Care Request Ledger
+              </h2>
+              <p className="text-xs text-[#6F6256] dark:text-[#9E9689]">
+                Complete audit history of all bedside gestures transmitted to the nursing station
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono font-semibold px-2.5 py-0.5 rounded bg-[#ECE3D4] dark:bg-[#141416] text-[#8C4327] dark:text-[#D49D4F] border border-[#DCD2C0] dark:border-[#222226]">
+                {requests.length} Total Calls (All Displayed)
+              </span>
+            </div>
           </div>
 
-          <div className="divide-y divide-[#E2E8F0]">
+          <div className="divide-y divide-[#DCD2C0] dark:divide-[#222226] max-h-[600px] overflow-y-auto pr-1">
             {requests.length === 0 ? (
-              <div className="py-6 text-center text-xs text-[#64748B]">
+              <div className="py-8 text-center text-xs text-[#6F6256] dark:text-[#9E9689]">
                 No care calls recorded yet. Commands triggered via your bedside gateway will appear here in real-time.
               </div>
             ) : (
-              requests.slice(0, 8).map((req) => (
-                <div key={req._id} className="py-3 flex items-center justify-between gap-3 text-xs">
+              requests.map((req) => (
+                <div key={req._id} className="py-3 flex items-center justify-between gap-3 text-xs hover:bg-[#F5EFE6]/50 dark:hover:bg-[#141416]/50 px-2 rounded-lg transition">
                   <div className="flex items-center gap-2.5">
                     <span
-                      className={`w-2.5 h-2.5 rounded-full ${
+                      className={`w-2.5 h-2.5 rounded-full shrink-0 ${
                         req.status === "RESOLVED"
-                          ? "bg-[#059669]"
+                          ? "bg-[#287A59]"
                           : req.status === "IN_PROGRESS"
-                          ? "bg-[#2563EB]"
+                          ? "bg-[#376B70]"
                           : req.status === "ACKNOWLEDGED"
-                          ? "bg-[#D97706]"
-                          : "bg-[#DC2626]"
+                          ? "bg-[#A86B24]"
+                          : "bg-[#B54747] animate-pulse"
                       }`}
                     />
                     <div>
-                      <div className="font-bold text-[#0F172A]">
+                      <div className="font-serif font-bold text-[#28211B] dark:text-[#F2ECE1]">
                         {req.displayLabel || req.label || req.action.replace(/_/g, " ")}
                       </div>
-                      <div className="text-[11px] text-[#64748B] font-mono">
-                        {new Date(req.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} &bull; Gateway: {req.device?.name || req.device?.deviceId || "Gateway"}
+                      <div className="text-[11px] text-[#6F6256] dark:text-[#9E9689] font-mono mt-0.5">
+                        {new Date(req.createdAt).toLocaleString([], { dateStyle: "short", timeStyle: "medium" })} &bull; Gateway: {req.device?.name || req.device?.deviceId || "Gateway"}
                       </div>
                     </div>
                   </div>
 
                   <span
-                    className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
+                    className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider ${
                       req.status === "RESOLVED"
-                        ? "bg-[#ECFDF5] text-[#047857] border border-[#A7F3D0]"
+                        ? "bg-[#EAF3EF] text-[#287A59] border border-[#BEDECE] dark:bg-[#287A59]/15 dark:border-[#287A59]/30 dark:text-[#4ADE80]"
                         : req.status === "IN_PROGRESS"
-                        ? "bg-[#EFF6FF] text-[#1D4ED8] border border-[#BFDBFE]"
+                        ? "bg-[#EAF0F3] text-[#183A4A] border border-[#C2D4DC] dark:bg-[#141416] dark:text-[#B9D8D2] dark:border-[#222226]"
                         : req.status === "ACKNOWLEDGED"
-                        ? "bg-[#FFFBEB] text-[#B45309] border border-[#FDE68A]"
-                        : "bg-[#FEF2F2] text-[#B91C1C] border border-[#FECACA]"
+                        ? "bg-[#FBF5EC] text-[#A86B24] border border-[#F0DCBE] dark:bg-[#A86B24]/15 dark:border-[#A86B24]/30 dark:text-[#FBBF24]"
+                        : "bg-[#FDF1F1] text-[#B54747] border border-[#F2C4C4] dark:bg-[#B54747]/15 dark:border-[#B54747]/30 dark:text-[#F87171]"
                     }`}
                   >
                     {req.status}

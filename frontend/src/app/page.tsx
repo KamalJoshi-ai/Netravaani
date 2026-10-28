@@ -11,10 +11,10 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] flex items-center justify-center p-6 text-[#0F172A] dark:text-[#F8FAFC]">
-        <div className="flex items-center gap-3 bg-white dark:bg-[#131B2E] border border-[#CBD5E1] dark:border-[#1E293B] rounded-xl px-5 py-3 shadow-subtle">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#059669] animate-ping" />
-          <span className="text-sm font-semibold font-sans">Connecting to NetraVaani...</span>
+      <div className="min-h-screen bg-[#F5EFE6] dark:bg-[#050505] flex items-center justify-center p-6 text-[#28211B] dark:text-[#F2ECE1]">
+        <div className="flex items-center gap-3 bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl px-4 py-3 shadow-xs">
+          <span className="w-2 h-2 rounded-full bg-[#8C4327] dark:bg-[#D49D4F] animate-pulse" />
+          <span className="text-xs font-serif font-semibold tracking-wide text-[#28211B] dark:text-[#F2ECE1]">Connecting to NetraVaani...</span>
         </div>
       </div>
     );

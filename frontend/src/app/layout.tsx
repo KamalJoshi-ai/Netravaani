@@ -15,7 +15,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] font-sans antialiased min-h-screen">
+      <body className="bg-[#F7F6F2] dark:bg-[#0E151E] text-[#18212B] dark:text-[#F0F4F7] font-sans antialiased min-h-screen selection:bg-[#B9D8D2]/40">
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>

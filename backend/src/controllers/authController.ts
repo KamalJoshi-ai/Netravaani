@@ -1,7 +1,7 @@
 import { CookieOptions, Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
-
+ 
 import User from "../models/User.js";
 import { Patient } from "../models/Patient.js";
 import { response } from "../utils/responsehandler.js";
@@ -45,29 +45,30 @@ function setAccessCookie(res: Response, token: string): void {
 // ─── register ────────────────────────────────────────────────────────────────
 
 export const register = asyncHandler(async (req: Request, res: Response) => {
-  const { name, email, password, role, isSeller } = req.body;
+  const { name, email, password, role, isSeller, username } = req.body;
   const reqId = (req as any).id || crypto.randomUUID();
 
-  if (!email || !password || !name) {
-    throw new AppError("Name, email, and password are required", 400);
+  if (!email || !password) {
+    throw new AppError("Email and password are required", 400);
   }
 
   const normalizedEmail = email.toLowerCase().trim();
+  const rawUsername = (username || req.body.username || name || normalizedEmail.split("@")[0] || "").trim().toLowerCase();
+  if (!rawUsername) {
+    throw new AppError("Unique username is required", 400);
+  }
+  if (rawUsername.length < 3 || rawUsername.length > 30 || !/^[a-z0-9_-]+$/.test(rawUsername)) {
+    throw new AppError("Username must be between 3 and 30 characters and contain only letters, numbers, underscores, or hyphens", 400);
+  }
+
+  const finalName = (name || rawUsername).trim();
   const normalizedRole = role === "patient" ? "patient" : (role || (isSeller ? "seller" : "nurse"));
-  logger.info("Register attempt", { email: normalizedEmail, role: normalizedRole, requestId: reqId });
+  logger.info("Register attempt", { email: normalizedEmail, username: rawUsername, role: normalizedRole, requestId: reqId });
 
   const existingUser = await User.findOne({ email: normalizedEmail });
   if (existingUser) {
     logger.warn("Register failed - user already exists", { email: normalizedEmail, requestId: reqId });
     throw new AppError("User already exists", 409);
-  }
-
-  const rawUsername = (req.body.username || normalizedEmail.split("@")[0] || "").trim().toLowerCase();
-  if (!rawUsername) {
-    throw new AppError("Username is required", 400);
-  }
-  if (rawUsername.length < 3 || rawUsername.length > 30 || !/^[a-z0-9_-]+$/.test(rawUsername)) {
-    throw new AppError("Username must be between 3 and 30 characters and contain only letters, numbers, underscores, or hyphens", 400);
   }
 
   const existingUsername = await User.findOne({ username: rawUsername });
@@ -82,7 +83,7 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   let user;
   try {
     user = await User.create({
-      name,
+      name: finalName,
       email: normalizedEmail,
       username: rawUsername,
       password,
@@ -112,19 +113,19 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
       await user.save();
 
       const existingPatient = await Patient.findOne({
-        $or: [{ patientCode: cleanCode }, { email: normalizedEmail }, { displayName: name }],
+        $or: [{ patientCode: cleanCode }, { email: normalizedEmail }, { displayName: finalName }],
       });
       if (!existingPatient) {
         await Patient.create({
           patientCode: cleanCode,
-          displayName: name,
+          displayName: finalName,
           email: normalizedEmail,
           userId: user._id,
           status: "ACTIVE",
           password,
           nurseAssignment: { status: "NONE" },
         });
-        logger.info("Auto-provisioned patient record", { patientCode: cleanCode, displayName: name, email: normalizedEmail });
+        logger.info("Auto-provisioned patient record", { patientCode: cleanCode, displayName: finalName, email: normalizedEmail });
       } else {
         existingPatient.email = normalizedEmail;
         existingPatient.userId = user._id;

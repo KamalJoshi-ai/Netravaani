@@ -171,6 +171,9 @@ export class CommandRuleService {
       { session }
     );
 
+    // Keep only ONE configuration document per device by replacing any previous configurations
+    await DeviceConfig.deleteMany({ device: device._id }, { session });
+
     const [config] = await DeviceConfig.create(
       [
         {
@@ -232,7 +235,7 @@ export class CommandRuleService {
     const device = await this.findDevice(deviceId);
     const [rules, versions] = await Promise.all([
       CommandRule.find({ device: device._id }).sort({ sortOrder: 1 }),
-      DeviceConfig.find({ device: device._id }).sort({ version: -1 }).limit(30),
+      DeviceConfig.find({ device: device._id }).sort({ version: -1 }).limit(1),
     ]);
     const summaries = versions.map(versionSummary);
     return {
@@ -243,12 +246,22 @@ export class CommandRuleService {
       appliedConfigVersion: device.appliedConfigVersion ?? null,
       desiredConfigVersion: device.desiredConfigVersion ?? null,
       lastSeenAt: device.lastSeenAt || null,
+      connectivityStatus: device.connectivityStatus,
+      isOnline: device.connectivityStatus === "ONLINE",
     };
   }
 
-  /** Saves a complete rule list as the next version (status PENDING). */
+  /** Saves a complete rule list, replacing the active configuration document (status PENDING). */
   async saveRules(deviceId: string, rules: EditableRule[], createdBy?: string) {
     this.assertValid(rules);
+    const dev = await this.findDevice(deviceId);
+    if (dev.connectivityStatus !== "ONLINE") {
+      throw new AppError(
+        400,
+        "DEVICE_OFFLINE",
+        `Cannot edit commands while device '${deviceId}' is offline. The gateway must be online to update OTA configurations.`
+      );
+    }
     const config = await runInTransaction(async (session) => {
       const device = await this.findDevice(deviceId, session);
       return this.writeVersion(device, rules, createdBy, session);
@@ -257,12 +270,27 @@ export class CommandRuleService {
   }
 
   async resetToDefaults(deviceId: string, createdBy?: string) {
+    const dev = await this.findDevice(deviceId);
+    if (dev.connectivityStatus !== "ONLINE") {
+      throw new AppError(
+        400,
+        "DEVICE_OFFLINE",
+        `Cannot reset commands while device '${deviceId}' is offline. The gateway must be online to update OTA configurations.`
+      );
+    }
     return this.saveRules(deviceId, defaultEditableRules(), createdBy);
   }
 
-  /** Re-issues an older version's rules as a new version. */
+  /** Re-issues rules as the active configuration. */
   async revertToVersion(deviceId: string, version: number, createdBy?: string) {
     const device = await this.findDevice(deviceId);
+    if (device.connectivityStatus !== "ONLINE") {
+      throw new AppError(
+        400,
+        "DEVICE_OFFLINE",
+        `Cannot revert commands while device '${deviceId}' is offline. The gateway must be online to update OTA configurations.`
+      );
+    }
     const old = await DeviceConfig.findOne({ device: device._id, version }).lean();
     if (!old) {
       throw new AppError(404, "CONFIG_NOT_FOUND", `Configuration version ${version} not found for device '${deviceId}'`);

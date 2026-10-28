@@ -87,18 +87,18 @@ export function Switch({
   checked,
   onChange,
   label,
-  tone = "terracotta",
+  tone = "navy",
   disabled,
   describedBy,
 }: {
   checked: boolean;
   onChange: (v: boolean) => void;
   label: string;
-  tone?: "terracotta" | "emergency" | "green";
+  tone?: "navy" | "terracotta" | "emergency" | "green";
   disabled?: boolean;
   describedBy?: string;
 }) {
-  const on = { terracotta: "bg-[#AD5D3D]", emergency: "bg-[#B42318]", green: "bg-[#42765A]" }[tone];
+  const on = { navy: "bg-[#183A4A]", terracotta: "bg-[#183A4A]", emergency: "bg-[#B54747]", green: "bg-[#287A59]" }[tone];
   return (
     <button
       type="button"
@@ -108,13 +108,13 @@ export function Switch({
       aria-describedby={describedBy}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D] focus-visible:ring-offset-2 focus-visible:ring-offset-[#FFFCF7] disabled:opacity-40 ${
-        checked ? `${on} border-transparent` : "bg-[#E5D9CA] border-[#D8CBBA]"
+      className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A] focus-visible:ring-offset-2 focus-visible:ring-offset-[#F7F6F2] dark:focus-visible:ring-offset-[#0E151E] disabled:opacity-40 ${
+        checked ? `${on} border-transparent` : "bg-[#EDEFEA] dark:bg-[#1B2636] border-[#DFE3DF] dark:border-[#27374D]"
       }`}
     >
       <span
         aria-hidden
-        className={`nv-switch-thumb inline-block h-[18px] w-[18px] rounded-full bg-white shadow-subtle ${
+        className={`nv-switch-thumb inline-block h-[18px] w-[18px] rounded-full bg-white shadow-xs ${
           checked ? "translate-x-[22px]" : "translate-x-[3px]"
         }`}
       />
@@ -139,7 +139,7 @@ export function Stepper({
   max?: number;
 }) {
   const btn =
-    "h-8 w-8 grid place-items-center rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] font-bold hover:border-[#AD5D3D] hover:text-[#AD5D3D] disabled:opacity-30 disabled:hover:border-[#E5D9CA] disabled:hover:text-[#211C19] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D]";
+    "h-8 w-8 grid place-items-center rounded-lg border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] text-[#18212B] dark:text-[#F0F4F7] font-semibold hover:border-[#183A4A] hover:text-[#183A4A] dark:hover:border-[#B9D8D2] dark:hover:text-[#B9D8D2] disabled:opacity-30 disabled:hover:border-[#DFE3DF] disabled:hover:text-[#18212B] transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A]";
   return (
     <div className="inline-flex items-center gap-1" role="group" aria-label={label}>
       <button type="button" className={btn} aria-label={`Decrease ${label}`} disabled={value <= min} onClick={() => onChange(Math.max(min, value - 1))}>
@@ -153,7 +153,7 @@ export function Stepper({
         value={value}
         aria-label={label}
         onChange={(e) => onChange(Math.max(min, Math.min(max, clampCount(Number(e.target.value)))))}
-        className="h-8 w-11 rounded-lg border border-[#E5D9CA] bg-[#FFFCF7] text-center text-sm font-bold tabular-nums text-[#211C19] focus:outline-none focus:border-[#AD5D3D] focus:ring-2 focus:ring-[#AD5D3D]/20 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
+        className="h-8 w-11 rounded-lg border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] text-center text-sm font-semibold tabular-nums text-[#18212B] dark:text-[#F0F4F7] focus:outline-none focus:border-[#183A4A] focus:ring-1 focus:ring-[#183A4A]/20 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none"
       />
       <button type="button" className={btn} aria-label={`Increase ${label}`} disabled={value >= max} onClick={() => onChange(Math.min(max, value + 1))}>
         +
@@ -173,14 +173,14 @@ export function InfoTip({ text, label }: { text: string; label: string }) {
         type="button"
         aria-label={label}
         aria-describedby={id}
-        className="h-4 w-4 rounded-full border border-[#C8BEB4] text-[9px] font-bold text-[#76685F] grid place-items-center hover:border-[#AD5D3D] hover:text-[#AD5D3D] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D]"
+        className="h-4 w-4 rounded-full border border-[#DFE3DF] text-[9px] font-semibold text-[#68747C] grid place-items-center hover:border-[#183A4A] hover:text-[#183A4A] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A]"
       >
         i
       </button>
       <span
         role="tooltip"
         id={id}
-        className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-56 -translate-x-1/2 rounded-lg bg-[#211C19] px-2.5 py-2 text-[11px] font-medium normal-case tracking-normal leading-snug text-[#FFFCF7] opacity-0 shadow-hover transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
+        className="pointer-events-none absolute left-1/2 top-full z-30 mt-2 w-56 -translate-x-1/2 rounded-lg bg-[#18212B] px-2.5 py-2 text-[11px] font-medium normal-case tracking-normal leading-snug text-white opacity-0 shadow-lg transition-opacity duration-150 group-hover:opacity-100 group-focus-within:opacity-100"
       >
         {text}
       </span>
@@ -247,15 +247,15 @@ export function RangeCell({
         aria-controls={panelId}
         aria-label={`${channelLabel} for ${ruleName}: ${formatRange(value) === "—" ? "not used" : formatRange(value)}. Edit`}
         onClick={() => setOpen((o) => !o)}
-        className={`w-full min-w-[64px] h-10 rounded-xl border px-3 text-left flex items-center justify-between gap-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D] ${
+        className={`w-full min-w-[64px] h-10 rounded-xl border px-3 text-left flex items-center justify-between gap-2 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A] ${
           invalid
-            ? "border-[#FECDCA] bg-[#FEF3F2] text-[#B42318]"
+            ? "border-[#F2C4C4] bg-[#FDF1F1] text-[#B54747]"
             : mode === "off"
-            ? "border-[#E5D9CA] bg-[#F5F1E9]/60 text-[#9E9086] hover:border-[#C8BEB4]"
-            : "border-[#E5D9CA] bg-[#FFFCF7] text-[#211C19] hover:border-[#AD5D3D]"
+            ? "border-[#DFE3DF] dark:border-[#27374D] bg-[#EDEFEA]/40 dark:bg-[#0E151E] text-[#68747C] dark:text-[#8FA1B0]"
+            : "border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] text-[#18212B] dark:text-[#F0F4F7] hover:border-[#183A4A]"
         }`}
       >
-        <span className="font-heading text-base font-extrabold tabular-nums">{formatRange(value)}</span>
+        <span className="text-sm font-semibold tabular-nums">{formatRange(value)}</span>
         <span aria-hidden className={`text-[10px] transition-transform ${open ? "rotate-180" : ""}`}>▾</span>
       </button>
 
@@ -264,9 +264,9 @@ export function RangeCell({
           id={panelId}
           role="group"
           aria-label={`${channelLabel} count for ${ruleName}`}
-          className="nv-pop-in absolute left-0 top-full z-40 mt-2 w-[248px] rounded-xl border border-[#E5D9CA] bg-[#FFFCF7] p-3 shadow-hover space-y-3"
+          className="absolute left-0 top-full z-40 mt-2 w-[248px] rounded-xl border border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A] p-3 shadow-lg space-y-3"
         >
-          <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#F0EAE1] p-1" role="radiogroup" aria-label="Count mode">
+          <div className="grid grid-cols-2 gap-1 rounded-lg bg-[#EDEFEA] dark:bg-[#0E151E] p-1" role="radiogroup" aria-label="Count mode">
             {MODES.map((m) => (
               <button
                 key={m.value}
@@ -274,8 +274,8 @@ export function RangeCell({
                 role="radio"
                 aria-checked={mode === m.value}
                 onClick={() => onChange(applyMode(value, m.value))}
-                className={`rounded-md px-2 py-1.5 text-[11px] font-bold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#AD5D3D] ${
-                  mode === m.value ? "bg-[#FFFCF7] text-[#AD5D3D] shadow-subtle" : "text-[#76685F] hover:text-[#211C19]"
+                className={`rounded-md px-2 py-1.5 text-[11px] font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#183A4A] ${
+                  mode === m.value ? "bg-white dark:bg-[#1B2636] text-[#183A4A] dark:text-[#B9D8D2] shadow-xs" : "text-[#68747C] dark:text-[#8FA1B0] hover:text-[#18212B]"
                 }`}
               >
                 {m.label}
@@ -303,11 +303,11 @@ export function RangeCell({
               </Row>
             </>
           )}
-          {mode === "off" && <p className="text-[11px] text-[#76685F]">This channel is not part of the gesture.</p>}
+          {mode === "off" && <p className="text-[11px] text-[#68747C] dark:text-[#8FA1B0]">This channel is not part of the gesture.</p>}
 
-          <div className="flex items-center justify-between border-t border-[#E5D9CA] pt-2 text-[11px] text-[#76685F]">
+          <div className="flex items-center justify-between border-t border-[#DFE3DF] dark:border-[#27374D] pt-2 text-[11px] text-[#68747C] dark:text-[#8FA1B0]">
             <span>
-              Shown as <strong className="font-heading text-[#211C19]">{formatRange(value)}</strong>
+              Shown as <strong className="text-[#18212B] dark:text-[#F0F4F7] font-semibold">{formatRange(value)}</strong>
             </span>
             <button
               type="button"
@@ -315,7 +315,7 @@ export function RangeCell({
                 setOpen(false);
                 trigger.current?.focus();
               }}
-              className="rounded-md px-2 py-1 font-bold text-[#AD5D3D] hover:bg-[#F5ECE6]"
+              className="rounded-md px-2 py-1 font-semibold text-[#183A4A] dark:text-[#B9D8D2] hover:bg-[#EDEFEA] dark:hover:bg-[#1B2636]"
             >
               Done
             </button>
@@ -329,7 +329,7 @@ export function RangeCell({
 function Row({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[11px] font-semibold text-[#76685F]">{label}</span>
+      <span className="text-[11px] font-medium text-[#68747C] dark:text-[#8FA1B0]">{label}</span>
       {children}
     </div>
   );
@@ -341,23 +341,22 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 export function StatusPill({
   version,
   deviceSeenRecently,
-  appliedVersion,
   justApplied,
 }: {
   version: RuleVersionItem;
   deviceSeenRecently: boolean;
-  appliedVersion: number | null;
+  appliedVersion?: number | null;
   justApplied: boolean;
 }) {
   if (version.status === "PENDING") {
     if (deviceSeenRecently) {
       return (
         <div className="flex flex-col gap-1">
-          <span className="nv-pending-pulse inline-flex w-fit items-center gap-2 rounded-full border border-[#E2C7B8] bg-[#FAF0E6] px-3 py-1 text-xs font-bold text-[#AD5D3D]">
-            <span className="h-2 w-2 rounded-full bg-[#AD5D3D]" />
-            Waiting for device… (v{version.version})
+          <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#F0DCBE] bg-[#FBF5EC] px-3 py-1 text-xs font-semibold text-[#A86B24]">
+            <span className="h-2 w-2 rounded-full bg-[#A86B24]" />
+            Syncing to device…
           </span>
-          <span className="text-[11px] text-[#76685F]">
+          <span className="text-[11px] text-[#68747C] dark:text-[#8FA1B0]">
             The device picks it up within about 10 seconds.
           </span>
         </div>
@@ -365,11 +364,11 @@ export function StatusPill({
     }
     return (
       <div className="flex flex-col gap-1">
-        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#E5D9CA] bg-[#F5ECE6] px-3 py-1 text-xs font-bold text-[#76685F]">
-          <span className="h-2 w-2 rounded-full bg-[#9E8E81]" />
-          Device offline (v{version.version} queued)
+        <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#DFE3DF] bg-[#EDEFEA] px-3 py-1 text-xs font-semibold text-[#68747C]">
+          <span className="h-2 w-2 rounded-full bg-[#68747C]" />
+          Device offline (Configuration queued)
         </span>
-        <span className="text-[11px] text-[#76685F]">
+        <span className="text-[11px] text-[#68747C] dark:text-[#8FA1B0]">
           Device offline: will apply when it reconnects.
         </span>
       </div>
@@ -378,24 +377,24 @@ export function StatusPill({
   if (version.status === "APPLIED") {
     return (
       <span
-        className={`inline-flex w-fit items-center gap-2 rounded-full border border-[#C5DDCF] bg-[#EDF5F0] px-3 py-1 text-xs font-bold text-[#42765A] ${
+        className={`inline-flex w-fit items-center gap-2 rounded-full border border-[#BEDECE] bg-[#EAF3EF] px-3 py-1 text-xs font-semibold text-[#287A59] ${
           justApplied ? "nv-applied-pop" : ""
         }`}
       >
         <span aria-hidden>✓</span>
-        Active on device (v{version.version})
+        Active on device
       </span>
     );
   }
   return (
     <div className="flex flex-col gap-1">
-      <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#FECDCA] bg-[#FEF3F2] px-3 py-1 text-xs font-bold text-[#B42318]">
+      <span className="inline-flex w-fit items-center gap-2 rounded-full border border-[#F2C4C4] bg-[#FDF1F1] px-3 py-1 text-xs font-semibold text-[#B54747]">
         <span aria-hidden>!</span>
-        Device rejected this version (v{version.version})
+        Device rejected configuration
       </span>
-      <span className="text-[11px] text-[#7A271A]">
+      <span className="text-[11px] text-[#B54747]">
         {version.error ? `Device said: "${version.error}". ` : ""}
-        The device is still running {appliedVersion ? `version ${appliedVersion}` : "its previous version"}.
+        The device is running its previous configuration.
       </span>
     </div>
   );

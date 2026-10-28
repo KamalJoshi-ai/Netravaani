@@ -3,9 +3,9 @@ import bcrypt from "bcryptjs";
 
 export interface IUser extends Document {
   _id: Types.ObjectId;
-  name: string;
+  name?: string;
   email: string;
-  username?: string;
+  username: string;
   password?: string;
   passwordHash?: string;
   role: string;
@@ -23,7 +23,7 @@ const UserSchema = new Schema<IUser>(
   {
     name: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
     email: {

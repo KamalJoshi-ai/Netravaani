@@ -644,7 +644,7 @@ class ApiClient {
     });
   }
 
-  async register(data: { name: string; username?: string; email: string; password: string; role?: string }): Promise<ApiResponse<{ user: any }>> {
+  async register(data: { name?: string; username: string; email: string; password: string; role?: string }): Promise<ApiResponse<{ user: any }>> {
     return this.request<ApiResponse<{ user: any }>>("/auth/register", {
       method: "POST",
       body: JSON.stringify(data),

@@ -105,21 +105,21 @@ export function ThemeToggle({
       onClick={toggleTheme}
       aria-label={isDark ? "Switch to light theme" : "Switch to dark theme"}
       title={isDark ? "Switch to light theme" : "Switch to dark theme"}
-      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition border shadow-xs ${
+      className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition border shadow-xs ${
         isDark
-          ? "bg-[#1E293B] border-[#334155] text-[#F8FAFC] hover:bg-[#334155] hover:text-[#FBBF24]"
-          : "bg-white border-[#CBD5E1] text-[#334155] hover:bg-[#F8FAFC] hover:text-[#0F172A] hover:border-[#94A3B8]"
+          ? "bg-[#151E2A] border-[#27374D] text-[#F0F4F7] hover:bg-[#1B2636] hover:text-[#B9D8D2] hover:border-[#437E84]"
+          : "bg-white border-[#DFE3DF] text-[#18212B] hover:bg-[#EDEFEA] hover:text-[#183A4A] hover:border-[#376B70]"
       } ${className}`}
     >
       {isDark ? (
         <>
-          <Sun className="w-3.5 h-3.5 text-[#F59E0B]" />
-          {showLabel && <span>Light Mode</span>}
+          <Sun className="w-3.5 h-3.5 text-[#B9D8D2]" />
+          {showLabel && <span>Light</span>}
         </>
       ) : (
         <>
-          <Moon className="w-3.5 h-3.5 text-[#475569]" />
-          {showLabel && <span>Dark Mode</span>}
+          <Moon className="w-3.5 h-3.5 text-[#376B70]" />
+          {showLabel && <span>Dark</span>}
         </>
       )}
     </button>

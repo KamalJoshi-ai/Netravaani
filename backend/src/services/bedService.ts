@@ -3,21 +3,6 @@ import { Bed, IBed, BedStatus } from "../models/Bed.js";
 import { Patient, IPatient } from "../models/Patient.js";
 import { AppError } from "../middleware/errorHandler.js";
 
-const DEFAULT_BEDS = [
-  "BED-101",
-  "BED-102",
-  "BED-103",
-  "BED-104",
-  "BED-105",
-  "BED-106",
-  "BED-107",
-  "BED-108",
-  "ICU-01",
-  "ICU-02",
-  "ICU-03",
-  "ICU-04",
-];
-
 export interface InitiatePatientRegistrationDto {
   displayName: string;
   bedNumber: string;
@@ -29,16 +14,30 @@ export interface InitiatePatientRegistrationDto {
 
 export class BedService {
   /**
-   * Ensure default beds exist in the database and sync confirmed patient beds
+   * Sync confirmed patient beds with the beds collection
    */
   async seedDefaultBedsIfEmpty(): Promise<void> {
-    for (const bNum of DEFAULT_BEDS) {
-      await Bed.updateOne(
-        { bedNumber: bNum },
-        { $setOnInsert: { bedNumber: bNum, status: "AVAILABLE" } },
-        { upsert: true }
-      );
-    }
+    // Purge any legacy unassigned fake beds from database
+    await Bed.deleteMany({
+      bedNumber: {
+        $in: [
+          "BED-101",
+          "BED-102",
+          "BED-103",
+          "BED-104",
+          "BED-105",
+          "BED-106",
+          "BED-107",
+          "BED-108",
+          "ICU-01",
+          "ICU-02",
+          "ICU-03",
+          "ICU-04",
+        ],
+      },
+      currentPatient: null,
+      pendingPatient: null,
+    });
 
     // Sync any active patients who already have confirmed beds
     const activePatientsWithBeds = await Patient.find({

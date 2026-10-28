@@ -29,13 +29,13 @@ export default function TryGesturePanel({
   return (
     <section
       aria-labelledby="try-gesture-title"
-      className="rounded-2xl border border-[#CDE2D5] bg-[#F2F8F4] p-4 shadow-subtle space-y-3"
+      className="rounded-2xl border border-[#DFE3DF] dark:border-[#27374D] bg-[#EDEFEA]/40 dark:bg-[#0E151E] p-4 shadow-xs space-y-3"
     >
       <div>
-        <h3 id="try-gesture-title" className="font-heading text-sm font-bold text-[#211C19]">
+        <h3 id="try-gesture-title" className="font-semibold text-sm text-[#18212B] dark:text-[#F0F4F7]">
           Try a gesture
         </h3>
-        <p className="text-[11px] text-[#76685F]">Enter what the patient does in one episode to see which command fires.</p>
+        <p className="text-[11px] text-[#68747C] dark:text-[#8FA1B0]">Enter what the patient does in one episode to see which command fires.</p>
       </div>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-2.5">
@@ -62,19 +62,21 @@ export default function TryGesturePanel({
       <div
         aria-live="polite"
         className={`rounded-xl border px-3 py-2.5 text-xs transition-colors ${
-          matched ? "border-[#C5DDCF] bg-[#EDF5F0]" : "border-[#E5D9CA] bg-[#F5F1E9]"
+          matched
+            ? "border-[#BEDECE] bg-[#EAF3EF] dark:bg-[#287A59]/15 dark:border-[#287A59]/30"
+            : "border-[#DFE3DF] dark:border-[#27374D] bg-white dark:bg-[#151E2A]"
         }`}
       >
         {matched ? (
           <>
-            <div className="font-bold text-[#42765A]">
+            <div className="font-semibold text-[#287A59] dark:text-[#4ADE80]">
               Fires: {matched.displayLabel?.trim() || matched.label}
               {matched.alarm ? " (raises alarm)" : matched.urgent ? " (urgent)" : ""}
             </div>
-            <div className="text-[11px] text-[#76685F] mt-0.5">{describeRule(toCommandRule(matched))}</div>
+            <div className="text-[11px] text-[#68747C] dark:text-[#8FA1B0] mt-0.5">{describeRule(toCommandRule(matched))}</div>
           </>
         ) : (
-          <div className="font-semibold text-[#76685F]">No command: nothing happens.</div>
+          <div className="font-medium text-[#68747C] dark:text-[#8FA1B0]">No command: nothing happens.</div>
         )}
       </div>
     </section>
@@ -84,7 +86,7 @@ export default function TryGesturePanel({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-xs font-semibold text-[#4A4039]">{label}</span>
+      <span className="text-xs font-semibold text-[#18212B] dark:text-[#F0F4F7]">{label}</span>
       {children}
     </div>
   );

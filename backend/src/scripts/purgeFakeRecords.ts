@@ -26,6 +26,17 @@ async function purgeFakeRecords() {
   });
   console.log(`Deleted fake patients: ${patientResult.deletedCount}`);
 
+  // Delete all fake beds (unassigned default seeded beds)
+  const bedResult = await mongoose.connection.collection("beds").deleteMany({
+    $or: [
+      { bedNumber: /^BED-10[1-8]$/ },
+      { bedNumber: /^ICU-0[1-4]$/ },
+    ],
+    currentPatient: null,
+    pendingPatient: null,
+  });
+  console.log(`Deleted fake beds: ${bedResult.deletedCount}`);
+
   // Display remaining records
   const remainingUsers = await mongoose.connection.collection("users").find({}).toArray();
   console.log("REMAINING USERS:");
@@ -34,6 +45,10 @@ async function purgeFakeRecords() {
   const remainingPatients = await mongoose.connection.collection("patients").find({}).toArray();
   console.log("REMAINING PATIENTS:");
   remainingPatients.forEach((p) => console.log(`- ${p._id} | ${p.displayName} | ${p.patientCode}`));
+
+  const remainingBeds = await mongoose.connection.collection("beds").find({}).toArray();
+  console.log("REMAINING BEDS:");
+  remainingBeds.forEach((b) => console.log(`- ${b._id} | Bed: ${b.bedNumber} | Status: ${b.status}`));
 
   await mongoose.disconnect();
 }
