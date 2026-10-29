@@ -5,6 +5,7 @@ import { Bed } from "../models/Bed.js";
 import User from "../models/User.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
 import { CareRequest } from "../models/CareRequest.js";
+import { broadcastBedsideAudio } from "./careRequestService.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { env } from "../config/env.js";
 
@@ -531,6 +532,18 @@ export class PatientService {
       action: targetCmd.action,
       configVersion: (activeAssignment.device as any).appliedConfigVersion || 1,
       status: "NEW",
+    });
+
+    broadcastBedsideAudio({
+      type: "REQUEST_DISPATCHED",
+      requestId: String(careRequest._id),
+      deviceId: (activeAssignment.device as any).deviceId,
+      patientCode: patient.patientCode,
+      patientName: patient.displayName,
+      bedLabel: patient.bedLabel,
+      action: targetCmd.action,
+      speechPrompt: "Your request has been sent.",
+      timestamp: new Date().toISOString(),
     });
 
     const populated = await CareRequest.findById(careRequest._id)

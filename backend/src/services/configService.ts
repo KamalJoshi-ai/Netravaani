@@ -41,14 +41,6 @@ export class ConfigService {
       );
     }
 
-    if (device.connectivityStatus !== "ONLINE") {
-      throw new AppError(
-        400,
-        "DEVICE_OFFLINE",
-        `Cannot configure device '${deviceId}' because it is offline. Gateway must be online to update configuration.`
-      );
-    }
-
     // Find latest version to increment safely
     const latestConfig = await DeviceConfig.findOne({ device: device._id })
       .sort({ version: -1 })
@@ -56,10 +48,7 @@ export class ConfigService {
 
     const nextVersion = latestConfig ? latestConfig.version + 1 : 1;
 
-    // Delete any older configurations for this device to replace in-place (only one config kept)
-    await DeviceConfig.deleteMany({ device: device._id });
-
-    // Create new replaced desired configuration record
+    // Create new desired configuration record
     const config = await DeviceConfig.create({
       device: device._id,
       version: nextVersion,

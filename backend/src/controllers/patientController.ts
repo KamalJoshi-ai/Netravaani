@@ -297,3 +297,43 @@ export const deallocateDeviceFromPatient = async (req: Request, res: Response, n
   }
 };
 
+// Update Patient Confirmation Settings
+export const updatePatientConfirmationSettings = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { patientCode } = req.params;
+    const { confirmGesture, rejectGesture, confirmPromptText, expiresInSeconds } = req.body || {};
+
+    const patient = await Patient.findOne({
+      $or: [
+        { patientCode },
+        { patientCode: patientCode.toUpperCase() },
+        { patientCode: patientCode.toLowerCase() },
+      ],
+    });
+    if (!patient) {
+      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    }
+
+    patient.confirmationSettings = {
+      confirmGesture: confirmGesture || patient.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT",
+      rejectGesture: rejectGesture || patient.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT",
+      confirmPromptText: confirmPromptText !== undefined ? confirmPromptText : patient.confirmationSettings?.confirmPromptText,
+      expiresInSeconds: typeof expiresInSeconds === "number" ? expiresInSeconds : (patient.confirmationSettings?.expiresInSeconds || 45),
+    };
+
+    await patient.save();
+
+    res.status(200).json({
+      status: "success",
+      message: "Patient confirmation settings updated",
+      data: patient.confirmationSettings,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

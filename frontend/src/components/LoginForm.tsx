@@ -5,14 +5,24 @@ import { useAuth } from "@/lib/auth";
 import { ThemeToggle } from "@/lib/theme";
 import { Shield, Bed, Mail } from "@/lib/noIcons";
 
-export default function LoginForm() {
+export interface LoginFormProps {
+  initialMode?: "login" | "signup";
+  initialRole?: "patient" | "nurse";
+  onBackToLanding?: () => void;
+}
+
+export default function LoginForm({
+  initialMode = "login",
+  initialRole = "patient",
+  onBackToLanding,
+}: LoginFormProps = {}) {
   const { login, register } = useAuth();
 
   // Mode: Sign In or Sign Up
-  const [authMode, setAuthMode] = useState<"login" | "signup">("login");
+  const [authMode, setAuthMode] = useState<"login" | "signup">(initialMode);
 
   // Role for Sign Up: Strictly Patient or Nurse
-  const [signupRole, setSignupRole] = useState<"patient" | "nurse">("patient");
+  const [signupRole, setSignupRole] = useState<"patient" | "nurse">(initialRole);
 
   // Form Fields
   const [username, setUsername] = useState("");
@@ -76,6 +86,20 @@ export default function LoginForm() {
 
   return (
     <div className="min-h-screen bg-[#F5EFE6] dark:bg-[#050505] text-[#28211B] dark:text-[#F2ECE1] flex flex-col justify-center py-12 px-4 sm:px-6 lg:px-8 relative transition-colors duration-150">
+      {/* Top Bar with Optional Back to Landing and Theme Toggle */}
+      <div className="absolute top-4 left-4 sm:top-6 sm:left-6">
+        {onBackToLanding && (
+          <button
+            type="button"
+            onClick={onBackToLanding}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-white dark:bg-[#131B2E] border border-[#CBD5E1] dark:border-[#1E293B] text-[#475569] dark:text-[#94A3B8] hover:text-[#0F172A] dark:hover:text-white transition shadow-xs"
+          >
+            <span>&larr;</span>
+            <span>Back to Landing</span>
+          </button>
+        )}
+      </div>
+
       {/* Top-Right Theme Toggle */}
       <div className="absolute top-4 right-4 sm:top-6 sm:right-6">
         <ThemeToggle />

@@ -48,6 +48,62 @@ export interface ListCareRequestsQuery {
   patientCode?: string;
 }
 
+export interface BedsideAudioEvent {
+  type:
+    | "PATIENT_CONFIRMATION_REQUESTED"
+    | "PATIENT_CONFIRMATION_RESULT"
+    | "DISPATCH_CONFIRMATION_REQUESTED"
+    | "REQUEST_DISPATCHED"
+    | "REQUEST_CANCELLED"
+    | "HEARTBEAT"
+    | "CONNECTED";
+  mode?: "DISPATCH_CONFIRMATION" | "RESOLUTION_CONFIRMATION";
+  requestId?: string;
+  deviceId?: string;
+  patientCode?: string;
+  patientName?: string;
+  bedLabel?: string;
+  action?: string;
+  actionLabel?: string;
+  speechPrompt?: string;
+  confirmGesture?: string;
+  rejectGesture?: string;
+  resolved?: boolean;
+  expiresAt?: string;
+  timestamp: string;
+}
+
+type BedsideAudioListener = (event: BedsideAudioEvent) => void;
+const bedsideAudioListeners = new Set<{ filter: { deviceId?: string; patientCode?: string }; cb: BedsideAudioListener }>();
+
+export function subscribeBedsideAudio(
+  filter: { deviceId?: string; patientCode?: string },
+  cb: BedsideAudioListener
+): () => void {
+  const item = { filter, cb };
+  bedsideAudioListeners.add(item);
+  return () => {
+    bedsideAudioListeners.delete(item);
+  };
+}
+
+export function broadcastBedsideAudio(event: BedsideAudioEvent): void {
+  for (const listener of bedsideAudioListeners) {
+    const { deviceId, patientCode } = listener.filter;
+    if (deviceId && event.deviceId && deviceId.toLowerCase() !== event.deviceId.toLowerCase()) {
+      continue;
+    }
+    if (patientCode && event.patientCode && patientCode.toUpperCase() !== event.patientCode.toUpperCase()) {
+      continue;
+    }
+    try {
+      listener.cb(event);
+    } catch (e) {
+      console.warn("[BedsideAudio] listener error", e);
+    }
+  }
+}
+
 export function normalizeHardwareSerialCommand(input: string): {
   action: any;
   gestureId: string;
@@ -126,6 +182,176 @@ export class CareRequestService {
     }
     await device.save();
 
+    // 1. OUTGOING DISPATCH CONFIRMATION CHECK:
+    // Check if patient was asked to confirm an outgoing request before sending to nurse
+    const now = new Date();
+    const gId = (gestureId || ruleId || "").toUpperCase();
+    const isConfirmationEvent = !urgent && !alarm && ruleId !== "emergency" && (
+      ruleId === "yes" || ruleId === "no" ||
+      gId === "YES" || gId === "NO" ||
+      gId.includes("CONFIRM") || gId.includes("CANCEL") ||
+      eventType === "PATIENT_CONFIRMATION" || eventType === "DISPATCH_CONFIRMATION"
+    );
+
+    const pendingDispatch = isConfirmationEvent ? await CareRequest.findOne({
+      device: device._id,
+      status: "PENDING_DISPATCH_CONFIRMATION",
+      confirmationExpiresAt: { $gt: now },
+    })
+      .sort({ confirmationRequestedAt: -1 })
+      .populate("patient", "patientCode displayName bedLabel confirmationSettings") : null;
+
+    if (pendingDispatch) {
+      const patientDoc = pendingDispatch.patient as any;
+      const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+      const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+
+      const rCounts = counts || { eog: 0, emgLeft: 0, emgRight: 0, together: 0 };
+
+      const isConfirm =
+        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2") || gId === "YES")) ||
+        (confirmGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        (confirmGesture === "SINGLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 1 || gId.includes("RIGHT_1"))) ||
+        gId === "CONFIRM_DISPATCH" ||
+        gId === "YES" ||
+        ruleId === "yes";
+
+      const isCancel =
+        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId === "NO")) ||
+        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        gId === "CANCEL_DISPATCH" ||
+        gId === "NO" ||
+        ruleId === "no";
+
+      if (isConfirm) {
+        pendingDispatch.status = "NEW";
+        pendingDispatch.confirmationRequestedAt = undefined;
+        pendingDispatch.confirmationExpiresAt = undefined;
+        await pendingDispatch.save();
+
+        broadcastBedsideAudio({
+          type: "REQUEST_DISPATCHED",
+          requestId: String(pendingDispatch._id),
+          deviceId: device.deviceId,
+          patientCode: patientDoc?.patientCode,
+          patientName: patientDoc?.displayName,
+          bedLabel: patientDoc?.bedLabel,
+          speechPrompt: "Your request has been sent.",
+          timestamp: new Date().toISOString(),
+        });
+
+        const updated = await CareRequest.findById(pendingDispatch._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return { isDuplicate: false, careRequest: updated || pendingDispatch, accepted: true };
+      }
+
+      if (isCancel) {
+        pendingDispatch.status = "CANCELLED";
+        await pendingDispatch.save();
+
+        broadcastBedsideAudio({
+          type: "REQUEST_CANCELLED",
+          requestId: String(pendingDispatch._id),
+          deviceId: device.deviceId,
+          patientCode: patientDoc?.patientCode,
+          patientName: patientDoc?.displayName,
+          bedLabel: patientDoc?.bedLabel,
+          speechPrompt: "Request cancelled.",
+          timestamp: new Date().toISOString(),
+        });
+
+        return { isDuplicate: false, accepted: true };
+      }
+    }
+
+    // 2. CLOSED-LOOP RESOLUTION: Check if this device has an active CareRequest awaiting patient resolution confirmation
+    const pendingConfirmation = isConfirmationEvent ? await CareRequest.findOne({
+      device: device._id,
+      status: "PENDING_PATIENT_CONFIRMATION",
+      confirmationExpiresAt: { $gt: now },
+    })
+      .sort({ confirmationRequestedAt: -1 })
+      .populate("patient", "patientCode displayName bedLabel confirmationSettings") : null;
+
+    if (pendingConfirmation) {
+      const patientDoc = pendingConfirmation.patient as any;
+      const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+      const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+
+      const rCounts = counts || { eog: 0, emgLeft: 0, emgRight: 0, together: 0 };
+      const gId = (gestureId || ruleId || "").toUpperCase();
+
+      // Check for Confirmation (YES) - Default: Right wrist double squeeze (counts.emgRight >= 2)
+      const isConfirm =
+        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2") || gId === "YES")) ||
+        (confirmGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        (confirmGesture === "SINGLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 1 || gId.includes("RIGHT_1"))) ||
+        gId === "CONFIRM_RESOLVED" ||
+        gId === "YES" ||
+        ruleId === "yes";
+
+      // Check for Rejection (NO / Disputed) - Default: Left wrist single squeeze (counts.emgLeft >= 1)
+      const isReject =
+        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId === "NO")) ||
+        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        gId === "REJECT_RESOLVED" ||
+        gId === "NO" ||
+        ruleId === "no";
+
+      if (isConfirm) {
+        pendingConfirmation.status = "RESOLVED";
+        pendingConfirmation.resolvedAt = new Date();
+        pendingConfirmation.resolvedBy = "PATIENT_CONFIRMED";
+        pendingConfirmation.patientConfirmedAt = new Date();
+        await pendingConfirmation.save();
+
+        broadcastBedsideAudio({
+          type: "PATIENT_CONFIRMATION_RESULT",
+          requestId: String(pendingConfirmation._id),
+          deviceId: device.deviceId,
+          patientCode: patientDoc?.patientCode,
+          patientName: patientDoc?.displayName,
+          bedLabel: patientDoc?.bedLabel,
+          resolved: true,
+          speechPrompt: "Thank you. Call marked as resolved by patient.",
+          timestamp: new Date().toISOString(),
+        });
+
+        const updated = await CareRequest.findById(pendingConfirmation._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return { isDuplicate: false, careRequest: updated || pendingConfirmation, accepted: true };
+      }
+
+      if (isReject) {
+        pendingConfirmation.status = "IN_PROGRESS";
+        pendingConfirmation.urgent = true; // Escalated
+        pendingConfirmation.patientDisputedAt = new Date();
+        await pendingConfirmation.save();
+
+        broadcastBedsideAudio({
+          type: "PATIENT_CONFIRMATION_RESULT",
+          requestId: String(pendingConfirmation._id),
+          deviceId: device.deviceId,
+          patientCode: patientDoc?.patientCode,
+          patientName: patientDoc?.displayName,
+          bedLabel: patientDoc?.bedLabel,
+          resolved: false,
+          speechPrompt: "Nurse re-alerted. Help is on the way.",
+          timestamp: new Date().toISOString(),
+        });
+
+        const updated = await CareRequest.findById(pendingConfirmation._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return { isDuplicate: false, careRequest: updated || pendingConfirmation, accepted: true };
+      }
+    }
+
     // Firmware nv-4.0.0: the request names the command rule that fired.
     if (ruleId && (!eventType || eventType === "PATIENT_REQUEST")) {
       const assignment = await DeviceAssignment.findOne({ device: device._id, isActive: true });
@@ -134,6 +360,65 @@ export class CareRequestService {
         RULE_ACTION[ruleId] ||
         (action && (RequestActionEnum as readonly string[]).includes(action.toUpperCase()) ? action.toUpperCase() : "REQUEST");
       const isAlarm = Boolean(alarm);
+      const isUrgent = Boolean(urgent) || isAlarm || legacyAction === "EMERGENCY";
+
+      const patientId = assignment?.patient;
+      const patientDoc = patientId ? await Patient.findById(patientId) : null;
+      const requireDispatchConfirm =
+        Boolean(patientDoc?.confirmationSettings?.requireDispatchConfirmation) &&
+        !isUrgent &&
+        ruleId !== "yes" &&
+        ruleId !== "no";
+
+      if (requireDispatchConfirm) {
+        const dispatchExpiresInSeconds = patientDoc?.confirmationSettings?.dispatchExpiresInSeconds || 15;
+        const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+        const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+        const spokenAction = (deviceLabel || legacyAction).replace(/[_]+/g, " ");
+
+        const careRequest = await CareRequest.create({
+          eventId,
+          device: device._id,
+          patient: patientId || undefined,
+          gestureId: ruleId,
+          gesture: deviceLabel,
+          ruleId,
+          label: deviceLabel,
+          counts: counts || undefined,
+          urgent: false,
+          alarm: false,
+          action: legacyAction,
+          configVersion: configVersion || device.appliedConfigVersion || 1,
+          status: "PENDING_DISPATCH_CONFIRMATION",
+          confirmationRequestedAt: new Date(),
+          confirmationExpiresAt: new Date(Date.now() + dispatchExpiresInSeconds * 1000),
+        });
+
+        const promptText = `You asked for ${spokenAction}. Squeeze your right wrist twice to send to the nurse, or squeeze your left wrist once to cancel.`;
+
+        broadcastBedsideAudio({
+          type: "DISPATCH_CONFIRMATION_REQUESTED",
+          mode: "DISPATCH_CONFIRMATION",
+          requestId: String(careRequest._id),
+          deviceId: device.deviceId,
+          patientCode: patientDoc?.patientCode,
+          patientName: patientDoc?.displayName,
+          bedLabel: patientDoc?.bedLabel,
+          action: legacyAction,
+          actionLabel: deviceLabel,
+          speechPrompt: promptText,
+          confirmGesture,
+          rejectGesture,
+          expiresAt: careRequest.confirmationExpiresAt ? careRequest.confirmationExpiresAt.toISOString() : new Date().toISOString(),
+          timestamp: new Date().toISOString(),
+        });
+
+        const populated = await CareRequest.findById(careRequest._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return { isDuplicate: false, careRequest: populated || careRequest };
+      }
 
       const careRequest = await CareRequest.create({
         eventId,
@@ -150,6 +435,17 @@ export class CareRequestService {
         action: legacyAction,
         configVersion: configVersion || device.appliedConfigVersion || 1,
         status: "NEW",
+      });
+
+      broadcastBedsideAudio({
+        type: "REQUEST_DISPATCHED",
+        requestId: String(careRequest._id),
+        deviceId: device.deviceId,
+        patientCode: patientDoc?.patientCode,
+        patientName: patientDoc?.displayName,
+        bedLabel: patientDoc?.bedLabel,
+        speechPrompt: isUrgent ? "Emergency request sent to nurse station." : "Your request has been sent.",
+        timestamp: new Date().toISOString(),
       });
 
       const populated = await CareRequest.findById(careRequest._id)
@@ -185,6 +481,7 @@ export class CareRequestService {
         throw new AppError(400, "PATIENT_NOT_FOUND", `Active patient for device '${deviceId}' could not be resolved`);
       }
 
+      // Check configuration version against device config
       const config = await DeviceConfig.findOne({
         device: device._id,
         version: configVersion,
@@ -194,7 +491,7 @@ export class CareRequestService {
         throw new AppError(
           400,
           "CONFIG_VERSION_NOT_FOUND",
-          `Configuration version ${configVersion} does not exist for device '${deviceId}'`
+          `Configuration version ${configVersion} not found for device '${deviceId}'`
         );
       }
 
@@ -293,6 +590,8 @@ export class CareRequestService {
    * List care requests with optional filtering and pagination
    */
   async listCareRequests(query: ListCareRequestsQuery) {
+    await this.checkPendingDispatchTimeouts();
+
     const page = query.page || 1;
     const limit = query.limit || 20;
     const skip = (page - 1) * limit;
@@ -301,6 +600,8 @@ export class CareRequestService {
 
     if (query.status) {
       filter.status = query.status;
+    } else {
+      filter.status = { $nin: ["PENDING_DISPATCH_CONFIRMATION", "CANCELLED"] };
     }
 
     if (query.deviceId) {
@@ -452,24 +753,310 @@ export class CareRequestService {
   }
 
   /**
-   * Lifecycle: Resolve an IN_PROGRESS request
+   * Closed-Loop: Request patient verification for an IN_PROGRESS or ACKNOWLEDGED request
    */
-  async resolveRequest(id: string): Promise<ICareRequest> {
+  async requestPatientConfirmation(id: string): Promise<ICareRequest> {
     const request = await this.getCareRequestById(id);
 
-    if (request.status !== "IN_PROGRESS") {
+    if (request.status === "RESOLVED") {
       throw new AppError(
         400,
         "INVALID_STATE_TRANSITION",
-        `Cannot resolve care request: current status is '${request.status}', expected 'IN_PROGRESS'`
+        "Cannot request patient confirmation for an already resolved request"
+      );
+    }
+
+    const patient = await Patient.findById(request.patient);
+    const device = await Device.findById(request.device);
+
+    const expiresInSeconds = patient?.confirmationSettings?.expiresInSeconds || 45;
+    const confirmGesture = patient?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+    const rejectGesture = patient?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+
+    let promptText = patient?.confirmationSettings?.confirmPromptText;
+    if (!promptText) {
+      const confirmLabel =
+        confirmGesture === "DOUBLE_SQUEEZE_RIGHT"
+          ? "squeeze your right wrist twice"
+          : confirmGesture === "DOUBLE_BLINK"
+          ? "blink twice"
+          : "squeeze right wrist twice";
+      const rejectLabel =
+        rejectGesture === "SINGLE_SQUEEZE_LEFT"
+          ? "squeeze your left wrist once"
+          : "squeeze left wrist once";
+      promptText = `Did you receive assistance? ${confirmLabel} for Yes, or ${rejectLabel} for No.`;
+    }
+
+    request.status = "PENDING_PATIENT_CONFIRMATION";
+    request.confirmationRequestedAt = new Date();
+    request.confirmationExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    await request.save();
+
+    broadcastBedsideAudio({
+      type: "PATIENT_CONFIRMATION_REQUESTED",
+      requestId: String(request._id),
+      deviceId: device?.deviceId,
+      patientCode: patient?.patientCode,
+      patientName: patient?.displayName,
+      bedLabel: patient?.bedLabel,
+      speechPrompt: promptText,
+      confirmGesture,
+      rejectGesture,
+      expiresAt: request.confirmationExpiresAt.toISOString(),
+      timestamp: new Date().toISOString(),
+    });
+
+    return request;
+  }
+
+  /**
+   * Lifecycle: Resolve a request (either via nurse override or patient confirmation)
+   */
+  async resolveRequest(
+    id: string,
+    resolvedBy: "NURSE_OVERRIDE" | "PATIENT_CONFIRMED" = "NURSE_OVERRIDE"
+  ): Promise<ICareRequest> {
+    const request = await this.getCareRequestById(id);
+
+    if (
+      request.status !== "IN_PROGRESS" &&
+      request.status !== "PENDING_PATIENT_CONFIRMATION"
+    ) {
+      throw new AppError(
+        400,
+        "INVALID_STATE_TRANSITION",
+        `Cannot resolve care request: current status is '${request.status}', expected 'IN_PROGRESS' or 'PENDING_PATIENT_CONFIRMATION'`
       );
     }
 
     request.status = "RESOLVED";
     request.resolvedAt = new Date();
+    request.resolvedBy = resolvedBy;
     await request.save();
 
+    const device = await Device.findById(request.device);
+    const patient = await Patient.findById(request.patient);
+
+    broadcastBedsideAudio({
+      type: "PATIENT_CONFIRMATION_RESULT",
+      requestId: String(request._id),
+      deviceId: device?.deviceId,
+      patientCode: patient?.patientCode,
+      patientName: patient?.displayName,
+      bedLabel: patient?.bedLabel,
+      resolved: true,
+      speechPrompt: "Thank you. Call marked as resolved.",
+      timestamp: new Date().toISOString(),
+    });
+
     return request;
+  }
+
+  /**
+   * Confirm an outgoing care request dispatch (promote to NEW)
+   */
+  async confirmDispatch(id: string): Promise<ICareRequest> {
+    const request = await this.getCareRequestById(id);
+    if (request.status !== "PENDING_DISPATCH_CONFIRMATION") {
+      return request;
+    }
+
+    request.status = "NEW";
+    request.confirmationRequestedAt = undefined;
+    request.confirmationExpiresAt = undefined;
+    await request.save();
+
+    const device = await Device.findById(request.device);
+    const patient = await Patient.findById(request.patient);
+
+    broadcastBedsideAudio({
+      type: "REQUEST_DISPATCHED",
+      requestId: String(request._id),
+      deviceId: device?.deviceId,
+      patientCode: patient?.patientCode,
+      patientName: patient?.displayName,
+      bedLabel: patient?.bedLabel,
+      action: request.action,
+      speechPrompt: "Your request has been sent.",
+      timestamp: new Date().toISOString(),
+    });
+
+    return request;
+  }
+
+  /**
+   * Cancel an outgoing care request dispatch
+   */
+  async cancelDispatch(id: string): Promise<ICareRequest> {
+    const request = await this.getCareRequestById(id);
+    if (request.status !== "PENDING_DISPATCH_CONFIRMATION") {
+      return request;
+    }
+
+    request.status = "CANCELLED";
+    await request.save();
+
+    const device = await Device.findById(request.device);
+    const patient = await Patient.findById(request.patient);
+
+    broadcastBedsideAudio({
+      type: "REQUEST_CANCELLED",
+      requestId: String(request._id),
+      deviceId: device?.deviceId,
+      patientCode: patient?.patientCode,
+      patientName: patient?.displayName,
+      bedLabel: patient?.bedLabel,
+      action: request.action,
+      speechPrompt: "Request cancelled.",
+      timestamp: new Date().toISOString(),
+    });
+
+    return request;
+  }
+
+  /**
+   * Check for expired dispatch confirmations and automatically dispatch them safely
+   */
+  async checkPendingDispatchTimeouts(): Promise<number> {
+    const expired = await CareRequest.find({
+      status: "PENDING_DISPATCH_CONFIRMATION",
+      confirmationExpiresAt: { $lte: new Date() },
+    })
+      .populate("device", "deviceId name status")
+      .populate("patient", "patientCode displayName bedLabel");
+
+    let count = 0;
+    for (const req of expired) {
+      req.status = "NEW";
+      req.confirmationRequestedAt = undefined;
+      req.confirmationExpiresAt = undefined;
+      await req.save();
+      count++;
+
+      const dev = req.device as any;
+      const pt = req.patient as any;
+      broadcastBedsideAudio({
+        type: "REQUEST_DISPATCHED",
+        requestId: String(req._id),
+        deviceId: dev?.deviceId,
+        patientCode: pt?.patientCode,
+        patientName: pt?.displayName,
+        bedLabel: pt?.bedLabel,
+        speechPrompt: "Your request has been sent.",
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return count;
+  }
+
+  /**
+   * Get current active patient confirmation status for phone speaker (dispatch OR resolution)
+   */
+  async getActiveConfirmation(filter: { deviceId?: string; patientCode?: string }) {
+    await this.checkPendingDispatchTimeouts();
+
+    let devIdObj: Types.ObjectId | undefined = undefined;
+    let ptIdObj: Types.ObjectId | undefined = undefined;
+
+    if (filter.deviceId) {
+      const dev = await Device.findOne({ deviceId: filter.deviceId });
+      if (dev) devIdObj = dev._id as Types.ObjectId;
+    }
+    if (filter.patientCode) {
+      const pt = await Patient.findOne({ patientCode: filter.patientCode.toUpperCase() });
+      if (pt) ptIdObj = pt._id as Types.ObjectId;
+    }
+
+    // 1. First check for active DISPATCH confirmation (outgoing from patient)
+    const dispatchQuery: any = {
+      status: "PENDING_DISPATCH_CONFIRMATION",
+      confirmationExpiresAt: { $gt: new Date() },
+    };
+    if (devIdObj) dispatchQuery.device = devIdObj;
+    if (ptIdObj) dispatchQuery.patient = ptIdObj;
+
+    const activeDispatch = await CareRequest.findOne(dispatchQuery)
+      .sort({ confirmationRequestedAt: -1 })
+      .populate("device", "deviceId name status")
+      .populate("patient", "patientCode displayName bedLabel confirmationSettings");
+
+    if (activeDispatch) {
+      const pt = activeDispatch.patient as any;
+      const dev = activeDispatch.device as any;
+      const confirmGesture = pt?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+      const rejectGesture = pt?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+      const actionLabel = (((activeDispatch as any).displayLabel as string) || activeDispatch.label || activeDispatch.action).replace(/_/g, " ");
+      const promptText = `You asked for ${actionLabel}. Squeeze your right wrist twice to send to the nurse, or squeeze your left wrist once to cancel.`;
+
+      const secondsRemaining = Math.max(
+        0,
+        Math.floor((new Date(activeDispatch.confirmationExpiresAt!).getTime() - Date.now()) / 1000)
+      );
+
+      return {
+        mode: "DISPATCH_CONFIRMATION",
+        requestId: String(activeDispatch._id),
+        deviceId: dev?.deviceId,
+        patientCode: pt?.patientCode,
+        patientName: pt?.displayName,
+        bedLabel: pt?.bedLabel,
+        action: activeDispatch.action,
+        actionLabel,
+        speechPrompt: promptText,
+        confirmGesture,
+        rejectGesture,
+        secondsRemaining,
+        confirmationExpiresAt: activeDispatch.confirmationExpiresAt,
+      };
+    }
+
+    // 2. Then check for active RESOLUTION confirmation (incoming from nurse)
+    const resolutionQuery: any = {
+      status: "PENDING_PATIENT_CONFIRMATION",
+      confirmationExpiresAt: { $gt: new Date() },
+    };
+    if (devIdObj) resolutionQuery.device = devIdObj;
+    if (ptIdObj) resolutionQuery.patient = ptIdObj;
+
+    const activeResolution = await CareRequest.findOne(resolutionQuery)
+      .sort({ confirmationRequestedAt: -1 })
+      .populate("device", "deviceId name status")
+      .populate("patient", "patientCode displayName bedLabel confirmationSettings");
+
+    if (activeResolution) {
+      const pt = activeResolution.patient as any;
+      const dev = activeResolution.device as any;
+      const confirmGesture = pt?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
+      const rejectGesture = pt?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+      let promptText = pt?.confirmationSettings?.confirmPromptText;
+      if (!promptText) {
+        promptText = `Did you receive assistance? Squeeze your right wrist twice for Yes, or squeeze your left wrist once for No.`;
+      }
+
+      const secondsRemaining = Math.max(
+        0,
+        Math.floor((new Date(activeResolution.confirmationExpiresAt!).getTime() - Date.now()) / 1000)
+      );
+
+      return {
+        mode: "RESOLUTION_CONFIRMATION",
+        requestId: String(activeResolution._id),
+        deviceId: dev?.deviceId,
+        patientCode: pt?.patientCode,
+        patientName: pt?.displayName,
+        bedLabel: pt?.bedLabel,
+        speechPrompt: promptText,
+        confirmGesture,
+        rejectGesture,
+        secondsRemaining,
+        confirmationExpiresAt: activeResolution.confirmationExpiresAt,
+        confirmationRequestedAt: activeResolution.confirmationRequestedAt,
+      };
+    }
+
+    return null;
   }
 
   /**
@@ -483,13 +1070,13 @@ export class CareRequestService {
   }
 
   /**
-   * Resolve all open care requests (NEW, ACKNOWLEDGED, IN_PROGRESS)
+   * Resolve all open care requests (NEW, ACKNOWLEDGED, IN_PROGRESS, PENDING_PATIENT_CONFIRMATION)
    */
   async resolveAllCareRequests(): Promise<number> {
     const now = new Date();
     const res = await CareRequest.updateMany(
-      { status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS"] } },
-      { $set: { status: "RESOLVED", resolvedAt: now } }
+      { status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_PATIENT_CONFIRMATION"] } },
+      { $set: { status: "RESOLVED", resolvedAt: now, resolvedBy: "NURSE_OVERRIDE" } }
     );
     // Reset any pending alarms on all devices
     await Device.updateMany({}, { $set: { silenceAlarmPending: true } });

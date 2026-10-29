@@ -137,6 +137,14 @@ export interface PatientItem {
     rejectedAt?: string;
     status: "NONE" | "PENDING" | "APPROVED" | "REJECTED";
   };
+  confirmationSettings?: {
+    confirmGesture: string;
+    rejectGesture: string;
+    confirmPromptText?: string;
+    expiresInSeconds?: number;
+    requireDispatchConfirmation?: boolean;
+    dispatchExpiresInSeconds?: number;
+  };
 }
 
 export interface DeviceAssignmentRecord {
@@ -197,6 +205,9 @@ export type CareRequestStatus =
   | "NEW"
   | "ACKNOWLEDGED"
   | "IN_PROGRESS"
+  | "PENDING_DISPATCH_CONFIRMATION"
+  | "CANCELLED"
+  | "PENDING_PATIENT_CONFIRMATION"
   | "RESOLVED";
 
 export interface CareRequestItem {
@@ -229,6 +240,12 @@ export interface CareRequestItem {
   status: CareRequestStatus;
   acknowledgedAt?: string;
   inProgressAt?: string;
+  confirmationRequestedAt?: string;
+  confirmationExpiresAt?: string;
+  resolvedBy?: "PATIENT_CONFIRMED" | "NURSE_OVERRIDE" | "TIMEOUT_AUTO";
+  patientConfirmedAt?: string;
+  patientDisputedAt?: string;
+  confirmationNote?: string;
   resolvedAt?: string;
   createdAt: string;
   updatedAt: string;
@@ -618,9 +635,57 @@ class ApiClient {
     });
   }
 
-  async resolveCareRequest(id: string): Promise<ApiResponse<CareRequestItem>> {
+  async requestPatientConfirmation(id: string): Promise<ApiResponse<CareRequestItem>> {
+    return this.request<ApiResponse<CareRequestItem>>(`/care-requests/${id}/request-confirmation`, {
+      method: "PATCH",
+    });
+  }
+
+  async confirmDispatch(id: string): Promise<ApiResponse<CareRequestItem>> {
+    return this.request<ApiResponse<CareRequestItem>>(`/care-requests/${id}/confirm-dispatch`, {
+      method: "POST",
+    });
+  }
+
+  async cancelDispatch(id: string): Promise<ApiResponse<CareRequestItem>> {
+    return this.request<ApiResponse<CareRequestItem>>(`/care-requests/${id}/cancel-dispatch`, {
+      method: "POST",
+    });
+  }
+
+  async resolveCareRequest(
+    id: string,
+    resolvedBy: "NURSE_OVERRIDE" | "PATIENT_CONFIRMED" = "NURSE_OVERRIDE"
+  ): Promise<ApiResponse<CareRequestItem>> {
     return this.request<ApiResponse<CareRequestItem>>(`/care-requests/${id}/resolve`, {
       method: "PATCH",
+      body: JSON.stringify({ resolvedBy }),
+    });
+  }
+
+  async getBedsideAudioStatus(params?: {
+    deviceId?: string;
+    patientCode?: string;
+  }): Promise<ApiResponse<any>> {
+    const searchParams = new URLSearchParams();
+    if (params?.deviceId) searchParams.set("deviceId", params.deviceId);
+    if (params?.patientCode) searchParams.set("patientCode", params.patientCode);
+    const query = searchParams.toString() ? `?${searchParams.toString()}` : "";
+    return this.request<ApiResponse<any>>(`/care-requests/bedside-audio-status${query}`);
+  }
+
+  async updatePatientConfirmationSettings(
+    patientCode: string,
+    settings: {
+      confirmGesture?: string;
+      rejectGesture?: string;
+      confirmPromptText?: string;
+      expiresInSeconds?: number;
+    }
+  ): Promise<ApiResponse<any>> {
+    return this.request<ApiResponse<any>>(`/patients/${patientCode}/confirmation-settings`, {
+      method: "PUT",
+      body: JSON.stringify(settings),
     });
   }
 

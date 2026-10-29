@@ -14,6 +14,7 @@ import {
   getPredefinedCommands,
   allocateDeviceToPatient,
   deallocateDeviceFromPatient,
+  updatePatientConfirmationSettings,
 } from "../controllers/patientController.js";
 import {
   proposeBedChange,
@@ -72,4 +73,8 @@ patientRouter.post("/:patientCode/trigger-command", triggerCommand);
 // Device Allocation to Patient
 patientRouter.post("/:patientCode/assign-device", allocateDeviceToPatient);
 patientRouter.post("/:patientCode/unassign-device", deallocateDeviceFromPatient);
+
+// Bedside Audio & Resolution Confirmation Settings
+patientRouter.put("/:patientCode/confirmation-settings", updatePatientConfirmationSettings);
+patientRouter.patch("/:patientCode/confirmation-settings", updatePatientConfirmationSettings);
 

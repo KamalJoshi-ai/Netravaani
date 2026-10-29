@@ -5,6 +5,9 @@ export const CareRequestStatusEnum = [
   "NEW",
   "ACKNOWLEDGED",
   "IN_PROGRESS",
+  "PENDING_DISPATCH_CONFIRMATION",
+  "CANCELLED",
+  "PENDING_PATIENT_CONFIRMATION",
   "RESOLVED",
 ] as const;
 export type CareRequestStatus = (typeof CareRequestStatusEnum)[number];
@@ -25,6 +28,12 @@ export interface ICareRequest extends Document {
   status: CareRequestStatus;
   acknowledgedAt?: Date;
   inProgressAt?: Date;
+  confirmationRequestedAt?: Date;
+  confirmationExpiresAt?: Date;
+  resolvedBy?: "PATIENT_CONFIRMED" | "NURSE_OVERRIDE" | "TIMEOUT_AUTO";
+  patientConfirmedAt?: Date;
+  patientDisputedAt?: Date;
+  confirmationNote?: string;
   resolvedAt?: Date;
   createdAt: Date;
   updatedAt: Date;
@@ -100,6 +109,26 @@ const CareRequestSchema = new Schema<ICareRequest>(
     },
     inProgressAt: {
       type: Date,
+    },
+    confirmationRequestedAt: {
+      type: Date,
+    },
+    confirmationExpiresAt: {
+      type: Date,
+    },
+    resolvedBy: {
+      type: String,
+      enum: ["PATIENT_CONFIRMED", "NURSE_OVERRIDE", "TIMEOUT_AUTO"],
+    },
+    patientConfirmedAt: {
+      type: Date,
+    },
+    patientDisputedAt: {
+      type: Date,
+    },
+    confirmationNote: {
+      type: String,
+      trim: true,
     },
     resolvedAt: {
       type: Date,

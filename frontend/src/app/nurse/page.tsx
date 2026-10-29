@@ -50,11 +50,12 @@ import { useVoiceAlerts } from "@/lib/speech";
 
 interface StepConfirmData {
   request: CareRequestItem;
-  nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED";
+  nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED" | "REQUEST_CONFIRMATION";
   stepTitle: string;
   stepDescription: string;
   actionButtonLabel: string;
   actionButtonColor: string;
+  isResolutionStep?: boolean;
 }
 
 interface PatientCallGroup {
@@ -440,7 +441,7 @@ export default function NurseDashboardPage() {
   // Step advancement confirmation
   const promptStepConfirmation = (
     req: CareRequestItem,
-    nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED"
+    nextStep: "ACKNOWLEDGED" | "IN_PROGRESS" | "RESOLVED" | "REQUEST_CONFIRMATION"
   ) => {
     const pName = req.patient?.displayName || req.patient?.patientCode || "Patient";
     const pBed = req.patient?.bedLabel || "Bed";
@@ -468,27 +469,36 @@ export default function NurseDashboardPage() {
       setStepConfirm({
         request: req,
         nextStep: "RESOLVED",
-        stepTitle: "Mark Request Resolved",
-        stepDescription: `Confirm care for ${act} has been completed for ${pName} on ${pBed}?`,
-        actionButtonLabel: "Complete & Resolve",
-        actionButtonColor: "bg-[#287A59] hover:bg-[#206348]",
+        isResolutionStep: true,
+        stepTitle: "Resolve & Request Patient Confirmation",
+        stepDescription: `Assistance for ${act} has been provided to ${pName} on ${pBed}. Ask patient to confirm resolution via bedside audio (Right wrist x2 for Yes, Left wrist x1 for No), or resolve immediately via nurse override.`,
+        actionButtonLabel: "Ask Patient to Confirm (Bedside Audio)",
+        actionButtonColor: "bg-[#8C4327] hover:bg-[#72361E]",
       });
     }
   };
 
-  const executeStepConfirmation = async () => {
+  const executeStepConfirmation = async (overrideDirectResolve?: boolean) => {
     if (!stepConfirm) return;
-    const { request, nextStep } = stepConfirm;
+    const { request, nextStep, isResolutionStep } = stepConfirm;
     setStepConfirm(null);
     try {
-      if (nextStep === "ACKNOWLEDGED") {
+      if (isResolutionStep) {
+        if (overrideDirectResolve) {
+          await apiClient.resolveCareRequest(request._id, "NURSE_OVERRIDE");
+          showToast("Request resolved via nurse override.");
+        } else {
+          await apiClient.requestPatientConfirmation(request._id);
+          showToast("Patient confirmation requested on bedside speaker.");
+        }
+      } else if (nextStep === "ACKNOWLEDGED") {
         await apiClient.acknowledgeCareRequest(request._id);
         showToast("Request acknowledged.");
       } else if (nextStep === "IN_PROGRESS") {
         await apiClient.startHandlingCareRequest(request._id);
         showToast("Request marked In Progress.");
       } else if (nextStep === "RESOLVED") {
-        await apiClient.resolveCareRequest(request._id);
+        await apiClient.resolveCareRequest(request._id, "NURSE_OVERRIDE");
         showToast("Request resolved and closed.");
       }
       await fetchRequests(false);
@@ -781,6 +791,27 @@ export default function NurseDashboardPage() {
                 </button>
               );
             })}
+
+            {/* Bedside Phone Speaker shortcut */}
+            <a
+              href="/bedside-audio"
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open Bedside Phone Speaker Node"
+              className={`w-full flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-semibold text-[#8C4327] dark:text-[#E48A64] bg-[#8C4327]/10 dark:bg-[#8C4327]/20 border border-[#8C4327]/30 hover:bg-[#8C4327]/20 transition ${
+                isSidebarCollapsed ? "justify-center px-2" : ""
+              }`}
+            >
+              <Volume2 className="w-4 h-4 shrink-0 text-[#8C4327]" />
+              {!isSidebarCollapsed && (
+                <div className="flex-1 flex items-center justify-between text-left">
+                  <span className="font-serif tracking-wide">Bedside Speaker</span>
+                  <span className="text-[10px] font-mono uppercase bg-[#8C4327] text-white px-1.5 py-0.5 rounded">
+                    Open
+                  </span>
+                </div>
+              )}
+            </a>
           </nav>
         </div>
 
@@ -1166,6 +1197,16 @@ export default function NurseDashboardPage() {
                   </div>
 
                   <div className="flex items-center gap-2 text-xs flex-wrap">
+                    <a
+                      href={`/bedside-audio?patientCode=${encodeURIComponent(selectedPatientGroup.patientCode)}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="px-2.5 py-1 rounded-md bg-[#8C4327]/10 hover:bg-[#8C4327]/20 text-[#8C4327] dark:bg-[#8C4327]/20 dark:text-[#E48A64] border border-[#8C4327]/30 font-medium flex items-center gap-1.5 transition"
+                      title="Open Bedside Audio Speaker page for this bed"
+                    >
+                      <Volume2 className="w-3.5 h-3.5" />
+                      <span>Bedside Speaker</span>
+                    </a>
                     <span className="px-2.5 py-1 rounded-md bg-[#ECE3D4] dark:bg-[#141416] text-[#6F6256] dark:text-[#9E9689] border border-[#DCD2C0] dark:border-[#222226] font-mono font-semibold">
                       {selectedPatientGroup.calls.length} Total Calls
                     </span>
@@ -1213,6 +1254,10 @@ export default function NurseDashboardPage() {
                               className={`w-2.5 h-2.5 rounded-full mt-1.5 shrink-0 ${
                                 req.status === "RESOLVED"
                                   ? "bg-[#2E6243]"
+                                  : req.status === "PENDING_PATIENT_CONFIRMATION"
+                                  ? "bg-[#8C4327] animate-ping"
+                                  : req.status === "PENDING_DISPATCH_CONFIRMATION"
+                                  ? "bg-[#D49D4F] animate-pulse"
                                   : req.status === "IN_PROGRESS"
                                   ? "bg-[#345C5A]"
                                   : req.status === "ACKNOWLEDGED"
@@ -1229,6 +1274,10 @@ export default function NurseDashboardPage() {
                                   className={`px-2 py-0.5 rounded text-[10px] font-mono font-bold uppercase tracking-wider ${
                                     req.status === "RESOLVED"
                                       ? "bg-[#EBF3ED] dark:bg-[#132418] text-[#2E6243] dark:text-[#4AA86C] border border-[#BCD5C4] dark:border-[#204A2E]"
+                                      : req.status === "PENDING_PATIENT_CONFIRMATION"
+                                      ? "bg-[#FAF0E6] dark:bg-[#25150E] text-[#8C4327] dark:text-[#E48A64] border border-[#8C4327]/30 dark:border-[#8C4327]/40 animate-pulse"
+                                      : req.status === "PENDING_DISPATCH_CONFIRMATION"
+                                      ? "bg-[#FFF9EE] dark:bg-[#2B2317] text-[#B88738] dark:text-[#E2B76D] border border-[#ECD9B9] dark:border-[#523F23] animate-pulse"
                                       : req.status === "IN_PROGRESS"
                                       ? "bg-[#E7EFEF] dark:bg-[#172626] text-[#345C5A] dark:text-[#AFC5C4] border border-[#AFC5C4] dark:border-[#264443]"
                                       : req.status === "ACKNOWLEDGED"
@@ -1236,7 +1285,11 @@ export default function NurseDashboardPage() {
                                       : "bg-[#FAEEEE] dark:bg-[#2B1414] text-[#9E3232] dark:text-[#D95B5B] border border-[#E8BCBC] dark:border-[#522323]"
                                   }`}
                                 >
-                                  {req.status}
+                                  {req.status === "PENDING_DISPATCH_CONFIRMATION"
+                                    ? "VERIFYING AT BEDSIDE"
+                                    : req.status === "PENDING_PATIENT_CONFIRMATION"
+                                    ? "AWAITING CONFIRMATION"
+                                    : req.status}
                                 </span>
                                 <span className="text-[11px] text-[#6F6256] dark:text-[#9E9689] flex items-center gap-1 font-mono">
                                   <Clock className="w-3 h-3" />
@@ -1253,6 +1306,25 @@ export default function NurseDashboardPage() {
 
                           {/* Action buttons */}
                           <div className="flex items-center gap-2 self-end sm:self-auto">
+                            {req.status === "PENDING_DISPATCH_CONFIRMATION" && (
+                              <div className="flex items-center gap-2">
+                                <span className="text-[11px] font-mono text-[#8C4327] dark:text-[#D49D4F] flex items-center gap-1">
+                                  <Clock className="w-3 h-3 animate-spin" />
+                                  <span>Patient verifying (15s)</span>
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await apiClient.confirmDispatch(req._id);
+                                    showToast("Request confirmed and dispatched.");
+                                    await fetchRequests(false);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-serif font-semibold bg-[#2E6243] text-white hover:bg-[#234C33] transition"
+                                >
+                                  Dispatch Now
+                                </button>
+                              </div>
+                            )}
                             {req.status === "NEW" && (
                               <button
                                 type="button"
@@ -1275,15 +1347,42 @@ export default function NurseDashboardPage() {
                               <button
                                 type="button"
                                 onClick={() => promptStepConfirmation(req, "RESOLVED")}
-                                className="px-3.5 py-1.5 rounded-lg text-xs font-serif font-semibold bg-[#2E6243] hover:bg-[#234C33] text-white transition shadow-xs"
+                                className="px-3.5 py-1.5 rounded-lg text-xs font-serif font-semibold bg-[#8C4327] hover:bg-[#77371F] text-white transition shadow-xs flex items-center gap-1.5"
                               >
-                                Mark Resolved
+                                <Volume2 className="w-3.5 h-3.5" />
+                                <span>Resolve / Verify</span>
                               </button>
+                            )}
+                            {req.status === "PENDING_PATIENT_CONFIRMATION" && (
+                              <div className="flex items-center gap-2">
+                                <div className="px-2.5 py-1 rounded-lg text-[11px] font-medium bg-[#8C4327]/10 text-[#8C4327] dark:bg-[#8C4327]/25 flex items-center gap-1.5 border border-[#8C4327]/20">
+                                  <Clock className="w-3.5 h-3.5 animate-spin text-[#8C4327]" />
+                                  <span>Right Wrist ×2 to Confirm</span>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={async () => {
+                                    await apiClient.resolveCareRequest(req._id, "NURSE_OVERRIDE");
+                                    showToast("Resolved via nurse override.");
+                                    await fetchRequests(false);
+                                  }}
+                                  className="px-2.5 py-1 rounded-lg text-[11px] font-serif font-semibold border border-[#8C4327]/40 text-[#8C4327] hover:bg-[#8C4327]/10 transition"
+                                  title="Force close without waiting for patient signal"
+                                >
+                                  Override
+                                </button>
+                              </div>
                             )}
                             {req.status === "RESOLVED" && (
                               <span className="text-xs font-serif font-semibold text-[#2E6243] dark:text-[#4AA86C] flex items-center gap-1">
                                 <Check className="w-3.5 h-3.5" />
-                                <span>Resolved</span>
+                                <span>
+                                  {req.resolvedBy === "PATIENT_CONFIRMED"
+                                    ? "Confirmed by Patient (Right Wrist ×2)"
+                                    : req.resolvedBy === "NURSE_OVERRIDE"
+                                    ? "Nurse Override"
+                                    : "Resolved"}
+                                </span>
                               </span>
                             )}
                           </div>
@@ -2103,7 +2202,7 @@ export default function NurseDashboardPage() {
       {/* STEP CONFIRMATION MODAL */}
       {stepConfirm && (
         <div className="fixed inset-0 z-50 bg-[#28211B]/50 dark:bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 max-w-sm w-full space-y-4 shadow-lg">
+          <div className="bg-[#FAF6F0] dark:bg-[#0D0D0E] border border-[#DCD2C0] dark:border-[#222226] rounded-xl p-5 max-w-sm w-full space-y-4 shadow-lg animate-in fade-in zoom-in-95 duration-150">
             <div className="flex items-center justify-between border-b border-[#DCD2C0] dark:border-[#222226] pb-2.5">
               <h3 className="font-serif font-bold text-sm text-[#28211B] dark:text-[#F2ECE1]">{stepConfirm.stepTitle}</h3>
               <button onClick={() => setStepConfirm(null)} className="text-[#6F6256] hover:text-[#28211B] dark:hover:text-[#F2ECE1] transition">
@@ -2113,22 +2212,50 @@ export default function NurseDashboardPage() {
             <p className="text-xs text-[#6F6256] dark:text-[#9E9689] leading-relaxed">
               {stepConfirm.stepDescription}
             </p>
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#DCD2C0] dark:border-[#222226]">
-              <button
-                type="button"
-                onClick={() => setStepConfirm(null)}
-                className="px-3 py-1.5 rounded-lg text-xs font-medium text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1] transition"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={executeStepConfirmation}
-                className={`px-4 py-1.5 rounded-lg text-xs font-semibold text-white shadow-xs ${stepConfirm.actionButtonColor}`}
-              >
-                {stepConfirm.actionButtonLabel}
-              </button>
-            </div>
+            {stepConfirm.isResolutionStep ? (
+              <div className="space-y-2 pt-2 border-t border-[#DCD2C0] dark:border-[#222226]">
+                <button
+                  type="button"
+                  onClick={() => executeStepConfirmation(false)}
+                  className="w-full py-2 px-3 rounded-lg text-xs font-semibold text-white bg-[#8C4327] hover:bg-[#77371F] transition flex items-center justify-center gap-2 shadow-xs"
+                >
+                  <Volume2 className="w-4 h-4" />
+                  <span>Ask Patient to Confirm (Bedside Audio)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeStepConfirmation(true)}
+                  className="w-full py-2 px-3 rounded-lg text-xs font-medium text-[#2E6243] dark:text-[#4AA86C] border border-[#2E6243]/30 dark:border-[#4AA86C]/30 hover:bg-[#2E6243]/10 transition flex items-center justify-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5" />
+                  <span>Direct Nurse Override (Mark Resolved)</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStepConfirm(null)}
+                  className="w-full py-1 text-center text-xs text-[#6F6256] dark:text-[#9E9689] hover:underline"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-[#DCD2C0] dark:border-[#222226]">
+                <button
+                  type="button"
+                  onClick={() => setStepConfirm(null)}
+                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-[#6F6256] dark:text-[#9E9689] hover:text-[#28211B] dark:hover:text-[#F2ECE1] transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => executeStepConfirmation(false)}
+                  className={`px-4 py-1.5 rounded-lg text-xs font-semibold text-white shadow-xs ${stepConfirm.actionButtonColor}`}
+                >
+                  {stepConfirm.actionButtonLabel}
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}

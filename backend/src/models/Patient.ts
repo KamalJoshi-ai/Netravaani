@@ -25,6 +25,15 @@ export interface INurseAssignment {
   status: NurseAssignmentStatus;
 }
 
+export interface IPatientConfirmationSettings {
+  confirmGesture: string; // e.g. "DOUBLE_SQUEEZE_RIGHT"
+  rejectGesture: string;  // e.g. "SINGLE_SQUEEZE_LEFT"
+  confirmPromptText?: string;
+  expiresInSeconds?: number;
+  requireDispatchConfirmation?: boolean;
+  dispatchExpiresInSeconds?: number;
+}
+
 export interface IPatient extends Document {
   patientCode: string;
   displayName: string;
@@ -40,6 +49,7 @@ export interface IPatient extends Document {
   status: PatientStatus;
   password?: string;
   nurseAssignment: INurseAssignment;
+  confirmationSettings?: IPatientConfirmationSettings;
   createdAt: Date;
   updatedAt: Date;
   comparePassword(candidatePassword: string): Promise<boolean>;
@@ -72,6 +82,43 @@ const NurseAssignmentSchema = new Schema<INurseAssignment>(
       enum: NurseAssignmentStatusEnum,
       default: "NONE",
       required: true,
+    },
+  },
+  { _id: false }
+);
+
+const PatientConfirmationSettingsSchema = new Schema<IPatientConfirmationSettings>(
+  {
+    confirmGesture: {
+      type: String,
+      default: "DOUBLE_SQUEEZE_RIGHT",
+      trim: true,
+    },
+    rejectGesture: {
+      type: String,
+      default: "SINGLE_SQUEEZE_LEFT",
+      trim: true,
+    },
+    confirmPromptText: {
+      type: String,
+      default: "Did you receive assistance? Squeeze your right wrist twice for Yes, or squeeze your left wrist once for No.",
+      trim: true,
+    },
+    expiresInSeconds: {
+      type: Number,
+      default: 45,
+      min: 10,
+      max: 180,
+    },
+    requireDispatchConfirmation: {
+      type: Boolean,
+      default: true,
+    },
+    dispatchExpiresInSeconds: {
+      type: Number,
+      default: 15,
+      min: 5,
+      max: 60,
     },
   },
   { _id: false }
@@ -143,6 +190,15 @@ const PatientSchema = new Schema<IPatient>(
     nurseAssignment: {
       type: NurseAssignmentSchema,
       default: () => ({ status: "NONE" }),
+    },
+    confirmationSettings: {
+      type: PatientConfirmationSettingsSchema,
+      default: () => ({
+        confirmGesture: "DOUBLE_SQUEEZE_RIGHT",
+        rejectGesture: "SINGLE_SQUEEZE_LEFT",
+        confirmPromptText: "Did you receive assistance? Squeeze your right wrist twice for Yes, or squeeze your left wrist once for No.",
+        expiresInSeconds: 45,
+      }),
     },
   },
   {

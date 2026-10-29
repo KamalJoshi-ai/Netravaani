@@ -100,6 +100,13 @@ export const listPatientsQuerySchema = z.object({
   status: z.enum(PatientStatusEnum).optional(),
 });
 
+export const updateConfirmationSettingsSchema = z.object({
+  confirmGesture: z.string().trim().min(1).max(64).default("DOUBLE_SQUEEZE_RIGHT"),
+  rejectGesture: z.string().trim().min(1).max(64).default("SINGLE_SQUEEZE_LEFT"),
+  confirmPromptText: z.string().trim().min(5).max(300).optional(),
+  expiresInSeconds: z.coerce.number().int().min(10).max(180).default(45),
+});
+
 // Assignment Schemas
 export const assignDeviceSchema = z.object({
   patientCode: z.string().trim().min(1, "patientCode is required"),

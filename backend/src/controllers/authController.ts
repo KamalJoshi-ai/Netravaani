@@ -53,11 +53,15 @@ export const register = asyncHandler(async (req: Request, res: Response) => {
   }
 
   const normalizedEmail = email.toLowerCase().trim();
-  const rawUsername = (username || req.body.username || name || normalizedEmail.split("@")[0] || "").trim().toLowerCase();
+  let rawUsername = (username || req.body.username || "").trim().toLowerCase();
   if (!rawUsername) {
-    throw new AppError("Unique username is required", 400);
+    const emailPrefix = normalizedEmail.split("@")[0].replace(/[^a-z0-9_-]/g, "_");
+    rawUsername = emailPrefix.slice(0, 30);
   }
-  if (rawUsername.length < 3 || rawUsername.length > 30 || !/^[a-z0-9_-]+$/.test(rawUsername)) {
+  if (!rawUsername || rawUsername.length < 3) {
+    rawUsername = `user_${crypto.randomBytes(3).toString("hex")}`;
+  }
+  if (rawUsername.length > 30 || !/^[a-z0-9_-]+$/.test(rawUsername)) {
     throw new AppError("Username must be between 3 and 30 characters and contain only letters, numbers, underscores, or hyphens", 400);
   }
 

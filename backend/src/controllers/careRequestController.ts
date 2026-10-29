@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from "express";
-import { careRequestService } from "../services/careRequestService.js";
+import { careRequestService, subscribeBedsideAudio, BedsideAudioEvent } from "../services/careRequestService.js";
 import { deviceEventSchema, listCareRequestsQuerySchema } from "../schemas/index.js";
 
 /**
@@ -155,12 +155,149 @@ export const resolveCareRequest = async (
 ): Promise<void> => {
   try {
     const { id } = req.params;
-    const updated = await careRequestService.resolveRequest(id);
+    const resolvedBy = req.body?.resolvedBy === "PATIENT_CONFIRMED" ? "PATIENT_CONFIRMED" : "NURSE_OVERRIDE";
+    const updated = await careRequestService.resolveRequest(id, resolvedBy);
 
     res.status(200).json({
       status: "success",
       message: "Care request resolved",
       data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Confirm outgoing care request dispatch
+ * POST /api/care-requests/:id/confirm-dispatch
+ */
+export const confirmDispatchCareRequest = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updated = await careRequestService.confirmDispatch(id);
+
+    res.status(200).json({
+      status: "success",
+      message: "Care request confirmed and dispatched to nurse station",
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Cancel outgoing care request dispatch
+ * POST /api/care-requests/:id/cancel-dispatch
+ */
+export const cancelDispatchCareRequest = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updated = await careRequestService.cancelDispatch(id);
+
+    res.status(200).json({
+      status: "success",
+      message: "Care request dispatch cancelled",
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * Request Patient Confirmation for Care Request
+ * PATCH /api/care-requests/:id/request-confirmation
+ */
+export const requestPatientConfirmation = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { id } = req.params;
+    const updated = await careRequestService.requestPatientConfirmation(id);
+
+    res.status(200).json({
+      status: "success",
+      message: "Patient confirmation requested",
+      data: updated,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
+/**
+ * SSE Bedside Audio Events Stream for phone bedside speaker
+ * GET /api/care-requests/bedside-audio-events
+ */
+export const getBedsideAudioEvents = (req: Request, res: Response): void => {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache, no-transform",
+    Connection: "keep-alive",
+  });
+  if (typeof (res as any).flushHeaders === "function") {
+    (res as any).flushHeaders();
+  }
+
+  const deviceId = typeof req.query.deviceId === "string" ? req.query.deviceId : undefined;
+  const patientCode = typeof req.query.patientCode === "string" ? req.query.patientCode : undefined;
+
+  // Send initial connected event
+  res.write(
+    `data: ${JSON.stringify({
+      type: "CONNECTED",
+      message: "Bedside Audio SSE stream established",
+      timestamp: new Date().toISOString(),
+    })}\n\n`
+  );
+
+  const unsubscribe = subscribeBedsideAudio(
+    { deviceId, patientCode },
+    (event: BedsideAudioEvent) => {
+      res.write(`data: ${JSON.stringify(event)}\n\n`);
+    }
+  );
+
+  // Keep-alive ping every 15 seconds
+  const pingInterval = setInterval(() => {
+    res.write(`: ping\n\n`);
+  }, 15000);
+
+  req.on("close", () => {
+    clearInterval(pingInterval);
+    unsubscribe();
+  });
+};
+
+/**
+ * Get active patient confirmation status for phone bedside speaker
+ * GET /api/care-requests/bedside-audio-status
+ */
+export const getBedsideAudioStatus = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const deviceId = typeof req.query.deviceId === "string" ? req.query.deviceId : undefined;
+    const patientCode = typeof req.query.patientCode === "string" ? req.query.patientCode : undefined;
+    const status = await careRequestService.getActiveConfirmation({ deviceId, patientCode });
+
+    res.status(200).json({
+      status: "success",
+      data: status,
     });
   } catch (err) {
     next(err);
