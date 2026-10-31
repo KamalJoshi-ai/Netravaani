@@ -12,7 +12,7 @@ export const sendEmail = async (
   subject: string,
   body: string
 ) => {
-  const fromAddress = process.env.EMAIL_FROM || "CodeKart <noreply@kamaljoshi-ai.xyz>";
+  const fromAddress = process.env.EMAIL_FROM || "NetraVaani <noreply@kamaljoshi-ai.xyz>";
 
   if (!resend) {
     logger.warn("RESEND_API key not found. Email not sent via network.", { to, subject });

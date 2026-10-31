@@ -9,6 +9,7 @@ import LandingNavbar from "@/components/landing/LandingNavbar";
 import HeroSection from "@/components/landing/HeroSection";
 import StatsTicker from "@/components/landing/StatsTicker";
 import HardwareExplodedSection from "@/components/landing/HardwareExplodedSection";
+import ClinicalJourneySection from "@/components/landing/ClinicalJourneySection";
 import BedsideSimulatorSection from "@/components/landing/BedsideSimulatorSection";
 import MembershipTiersSection from "@/components/landing/MembershipTiersSection";
 import LandingFooter from "@/components/landing/LandingFooter";
@@ -22,10 +23,10 @@ export default function Home() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] flex items-center justify-center p-6 text-[#0F172A] dark:text-[#F8FAFC]">
-        <div className="flex items-center gap-3 bg-white dark:bg-[#131B2E] border border-[#CBD5E1] dark:border-[#1E293B] rounded-xl px-4 py-3 shadow-xs">
-          <span className="w-2.5 h-2.5 rounded-full bg-[#059669] animate-pulse" />
-          <span className="text-xs font-semibold tracking-wide text-[#0F172A] dark:text-[#F8FAFC]">
+      <div className="min-h-screen bg-[#EEF2F6] flex items-center justify-center p-6 text-slate-900">
+        <div className="flex items-center gap-3 bg-white border border-slate-300 rounded-lg px-4 py-3 shadow-xs">
+          <span className="w-2 h-2 rounded-full bg-teal-600 animate-pulse" />
+          <span className="text-xs font-semibold text-slate-900">
             Connecting to NetraVaani...
           </span>
         </div>
@@ -52,18 +53,19 @@ export default function Home() {
     );
   }
 
-  // 3. Public Marketing: Interactive 3D Landing Page
+  // 3. Public Marketing: Landing Page
   const handleOpenAuth = (mode: "login" | "signup", role?: "patient" | "nurse") => {
     setAuthView({ mode, role });
   };
 
   return (
-    <div className="min-h-screen bg-[#F8FAFC] dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] selection:bg-[#059669] selection:text-white transition-colors duration-150">
+    <div className="min-h-screen bg-[#EEF2F6] text-[#090D16] selection:bg-teal-700 selection:text-white transition-colors duration-150">
       <LandingNavbar onOpenAuth={handleOpenAuth} />
       <main>
         <HeroSection onOpenAuth={handleOpenAuth} />
         <StatsTicker />
         <HardwareExplodedSection />
+        <ClinicalJourneySection />
         <BedsideSimulatorSection />
         <MembershipTiersSection onOpenAuth={handleOpenAuth} />
       </main>

@@ -27,6 +27,25 @@ export interface ApiResponse<T> {
   };
 }
 
+export const MAX_ACTIVE_REQUESTS_PER_PATIENT = 500;
+
+export type CommunicationMode = "MANDATORY_HANDSHAKE" | "NORMAL_COMMUNICATION";
+export type HandshakeStatus = "PENDING" | "WAITING_FOR_NO" | "WAITING_FOR_YES" | "COMPLETED";
+
+export interface PatientCommunicationStateItem {
+  _id?: string;
+  patient: string;
+  device: string;
+  assignment: string;
+  communicationMode: CommunicationMode;
+  handshakeStatus: HandshakeStatus;
+  yesSentAt?: string;
+  noSentAt?: string;
+  completedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface DeviceItem {
   _id: string;
   deviceId: string;
@@ -37,6 +56,7 @@ export interface DeviceItem {
   status: "AVAILABLE" | "ASSIGNED" | "OFFLINE" | "DISABLED";
   connectivityStatus?: "NEVER_SEEN" | "ONLINE" | "OFFLINE";
   firmwareVersion?: string;
+  batteryLevel?: number;
   lastSeenAt?: string;
   desiredConfigVersion?: number;
   appliedConfigVersion?: number;
@@ -44,6 +64,7 @@ export interface DeviceItem {
   registeredBy?: string;
   createdAt: string;
   updatedAt: string;
+  communicationState?: PatientCommunicationStateItem | null;
   currentAssignment?: {
     _id: string;
     patient: {
@@ -117,6 +138,7 @@ export interface PatientItem {
   status: "ACTIVE" | "INACTIVE" | "PENDING_BED_APPROVAL";
   createdAt: string;
   updatedAt: string;
+  communicationState?: PatientCommunicationStateItem | null;
   currentAssignment?: {
     _id: string;
     device: {
@@ -126,6 +148,7 @@ export interface PatientItem {
       firmwareVersion?: string;
       connectivityStatus?: string;
       hardwareId?: string;
+      batteryLevel?: number;
     };
   } | null;
   nurseAssignment?: {
@@ -281,6 +304,7 @@ export interface RuleVersionItem {
 
 export interface DeviceRulesResponse {
   deviceId: string;
+  batteryLevel?: number;
   rules: CommandRuleItem[];
   latestVersion: RuleVersionItem | null;
   versions: RuleVersionItem[];
@@ -317,8 +341,29 @@ class ApiClient {
     this.baseUrl = rawUrl.replace(/\/+$/, "").replace(/\/v1$/, "");
   }
 
+  private getEffectiveBaseUrl(): string {
+    if (typeof window !== "undefined") {
+      try {
+        const url = new URL(this.baseUrl, window.location.origin);
+        if (
+          (url.hostname === "localhost" || url.hostname === "127.0.0.1") &&
+          window.location.hostname !== "localhost" &&
+          window.location.hostname !== "127.0.0.1" &&
+          window.location.hostname !== ""
+        ) {
+          url.hostname = window.location.hostname;
+        }
+        return url.toString().replace(/\/+$/, "");
+      } catch {
+        return this.baseUrl;
+      }
+    }
+    return this.baseUrl;
+  }
+
   private async request<T>(endpoint: string, options?: RequestInit): Promise<T> {
-    const url = `${this.baseUrl}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
+    const base = this.getEffectiveBaseUrl();
+    const url = `${base}${endpoint.startsWith("/") ? endpoint : `/${endpoint}`}`;
     const headers = {
       "Content-Type": "application/json",
       ...(options?.headers || {}),
@@ -576,6 +621,14 @@ class ApiClient {
     return this.request<ApiResponse<PatientItem>>(`/patients/${patientCode}`);
   }
 
+  async getPatientCommunicationState(patientCode: string): Promise<ApiResponse<PatientCommunicationStateItem | null>> {
+    return this.request<ApiResponse<PatientCommunicationStateItem | null>>(`/patients/${patientCode}/communication-state`);
+  }
+
+  async getDeviceCommunicationState(deviceId: string): Promise<ApiResponse<PatientCommunicationStateItem | null>> {
+    return this.request<ApiResponse<PatientCommunicationStateItem | null>>(`/devices/${deviceId}/communication-state`);
+  }
+
   async createPatient(data: {
     displayName: string;
     bedLabel?: string;
@@ -590,11 +643,18 @@ class ApiClient {
 
   // Phase 4: Device Events & Care Requests
   async sendDeviceEvent(data: {
-    eventId: string;
+    eventId?: string;
     deviceId: string;
-    gestureId: string;
-    configVersion: number;
+    gestureId?: string;
+    gesture?: string;
+    configVersion?: number;
     timestamp?: string;
+    ruleId?: string;
+    label?: string;
+    action?: string;
+    urgent?: boolean;
+    alarm?: boolean;
+    counts?: { eog: number; emgLeft: number; emgRight: number; together: number };
   }): Promise<ApiResponse<CareRequestItem> & { isDuplicate?: boolean }> {
     return this.request<ApiResponse<CareRequestItem> & { isDuplicate?: boolean }>("/device-events", {
       method: "POST",

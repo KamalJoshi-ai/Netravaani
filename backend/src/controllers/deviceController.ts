@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import { deviceService } from "../services/deviceService.js";
 import { assignmentService } from "../services/assignmentService.js";
 import { configService } from "../services/configService.js";
+import { patientCommunicationService } from "../services/patientCommunicationService.js";
 import { AppError } from "../middleware/errorHandler.js";
 import {
   registerDeviceSchema,
@@ -301,19 +302,22 @@ export const deviceHeartbeat = async (
   next: NextFunction
 ): Promise<void> => {
   try {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : undefined;
     const validated = deviceHeartbeatSchema.parse(req.body);
-    const identifier = req.params.deviceId || validated.deviceId || validated.hardwareId;
-    if (!identifier) {
-      throw new AppError(400, "MISSING_DEVICE_ID", "deviceId or hardwareId must be provided in route URL or request payload");
+    const identifier = req.params.deviceId || validated.deviceId || validated.hardwareId || (req.headers["x-device-id"] as string);
+
+    if (!identifier && !bearerToken) {
+      throw new AppError(400, "MISSING_DEVICE_ID", "deviceId, hardwareId, or Authorization header must be provided");
     }
 
-    const { device: updated, silenceAlarm } = await deviceService.recordHeartbeat(identifier, validated);
+    const { device: updated, silenceAlarm } = await deviceService.recordHeartbeat(identifier || "", validated, bearerToken);
 
     res.status(200).json({
-      status: "success",
-      message: "Device heartbeat processed successfully",
       desiredConfigVersion: updated.desiredConfigVersion || 1,
       silenceAlarm,
+      status: "success",
+      message: "Device heartbeat processed successfully",
       data: {
         deviceId: updated.deviceId,
         hardwareId: updated.hardwareId,
@@ -321,6 +325,7 @@ export const deviceHeartbeat = async (
         connectivityStatus: updated.connectivityStatus,
         lastSeenAt: updated.lastSeenAt,
         firmwareVersion: updated.firmwareVersion,
+        batteryLevel: updated.batteryLevel,
         appliedConfigVersion: updated.appliedConfigVersion,
         desiredConfigVersion: updated.desiredConfigVersion,
       },
@@ -329,3 +334,21 @@ export const deviceHeartbeat = async (
     next(err);
   }
 };
+
+export const getDeviceCommunicationState = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { deviceId } = req.params;
+    const state = await patientCommunicationService.getForActiveDevice(deviceId);
+    res.status(200).json({
+      status: "success",
+      data: state,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+

@@ -33,7 +33,7 @@ describe("validateRuleSet (firmware nv-4.0.0 cases)", () => {
     const rules = [
       ...defaults(),
       { id: "tv", label: "Turn on the TV", eog: [1, 1] as [number, number], emgLeft: [1, 1] as [number, number], emgRight: zero },
-      { id: "family", label: "Call my family", eog: zero, emgLeft: zero, emgRight: [5, 6] as [number, number] },
+      { id: "family", label: "Call my family", eog: zero, emgLeft: zero, emgRight: [1, 2] as [number, number] },
     ];
     expect(rules).toHaveLength(8);
     expect(validateRuleSet(rules)).toBeNull();
@@ -72,30 +72,33 @@ describe("validateRuleSet (firmware nv-4.0.0 cases)", () => {
   });
 });
 
-describe("matchRule with the defaults (incidentalBlinks = 1)", () => {
+describe("matchRule with the defaults (incidentalBlinks = 20)", () => {
   // [blinks, left, right, together, expected rule id or null]
   const cases: [number, number, number, boolean, string | null][] = [
-    [2, 0, 0, false, "yes"],
+    [2, 0, 0, false, null],
     [3, 0, 0, false, "yes"],
-    [4, 0, 0, false, "water"],
+    [4, 0, 0, false, "yes"],
+    [5, 0, 0, false, "water"],
     [9, 0, 0, false, "water"],
     [1, 0, 0, false, null],
     [0, 1, 1, true, "no"],
+    [0, 2, 2, true, "no"],
     [0, 1, 1, false, null],
     [0, 3, 0, false, "call_nurse"],
+    [0, 10, 0, false, "call_nurse"],
     [1, 3, 0, false, "call_nurse"],
-    [2, 3, 0, false, null],
+    [2, 3, 0, false, "call_nurse"],
     [0, 0, 3, false, "adjustment"],
+    [0, 0, 10, false, "adjustment"],
     [0, 3, 3, true, "emergency"],
-    [0, 5, 5, true, "emergency"],
-    [0, 2, 2, true, null],
+    [0, 10, 10, true, "emergency"],
     [0, 2, 0, false, null],
   ];
 
   it.each(cases)("blinks %i, left %i, right %i, together %s fires %s", (b, l, r, together, expected) => {
     const rules = defaults();
     const pairs = together ? Math.min(l, r) : 0;
-    const i = matchRule(rules, b, l, r, pairs, 1);
+    const i = matchRule(rules, b, l, r, pairs, 20);
     expect(i === -1 ? null : rules[i].id).toBe(expected);
   });
 });
@@ -103,7 +106,7 @@ describe("matchRule with the defaults (incidentalBlinks = 1)", () => {
 describe("device payload", () => {
   it("omits false flags and keeps the compact worst case well under the device limit", () => {
     const payload = buildDevicePayload(1, defaults());
-    expect(payload.rules[0]).toEqual({ id: "yes", label: "YES", eog: [2, 3], emgLeft: [0, 0], emgRight: [0, 0] });
+    expect(payload.rules[0]).toEqual({ id: "yes", label: "YES", eog: [3, 4], emgLeft: [0, 0], emgRight: [0, 0] });
     expect("simultaneous" in payload.rules[0]).toBe(false);
 
     const worst: CommandRule[] = Array.from({ length: 10 }, (_, i) => ({
@@ -126,6 +129,6 @@ describe("device payload", () => {
       { id: "b", label: "B", eog: [5, 5] as [number, number], emgLeft: zero, emgRight: zero },
     ];
     const conflicts = validateRuleSetAll(rules).filter((e) => e.message === "two rules can match the same gesture");
-    expect(conflicts.map((c) => c.rules)).toEqual(expect.arrayContaining([[0, 6], [2, 6], [2, 7]]));
+    expect(conflicts.map((c) => c.rules)).toEqual(expect.arrayContaining([[0, 6], [2, 7]]));
   });
 });

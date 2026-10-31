@@ -67,8 +67,8 @@ describe("Command rules: registration, editor API, device delivery and acknowled
     const body = JSON.parse(res.text);
     expect(Object.keys(body)).toEqual(["version", "rules"]);
     expect(body.version).toBe(1);
-    expect(body.rules[0]).toEqual({ id: "yes", label: "YES", eog: [2, 3], emgLeft: [0, 0], emgRight: [0, 0] });
-    expect(body.rules[1]).toEqual({ id: "no", label: "NO", eog: [0, 0], emgLeft: [1, 1], emgRight: [1, 1], simultaneous: true });
+    expect(body.rules[0]).toEqual({ id: "yes", label: "YES", eog: [3, 4], emgLeft: [0, 0], emgRight: [0, 0] });
+    expect(body.rules[1]).toEqual({ id: "no", label: "NO", eog: [0, 0], emgLeft: [1, 2], emgRight: [1, 2], simultaneous: true });
     expect(body.rules[5]).toMatchObject({ id: "emergency", simultaneous: true, urgent: true, alarm: true });
   });
 

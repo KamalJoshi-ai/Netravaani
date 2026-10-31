@@ -53,7 +53,7 @@ export interface IDeviceConfig extends Document {
   device: Types.ObjectId;
   version: number;
   mappings: IGestureMapping[];
-  payload?: { version: number; rules: unknown[] };
+  payload?: any;
   ruleSnapshot?: IRuleSnapshot[];
   createdBy?: string;
   status: ConfigStatus;

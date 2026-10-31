@@ -1,29 +1,26 @@
-@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700;800&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,600;1,6..72,400&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap");
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --background: #F5EFE6;
-  --foreground: #28211B;
-  --surface: #FAF6F0;
-  --surface-secondary: #ECE3D4;
-  --border: #DCD2C0;
-  --border-subtle: #E8E0D2;
-  --navy: #1D2D38;
-  --teal: #345C5A;
-  --accent: #8C4327;
-  --sienna: #8C4327;
-  --brass: #B88738;
-  --text-primary: #28211B;
-  --text-secondary: #6F6256;
-  --success: #2E6243;
-  --warning: #A36F1C;
-  --error: #9E3232;
+  --background: #EEF2F6;
+  --foreground: #090D16;
+  --surface: #FFFFFF;
+  --surface-secondary: #E2E8F0;
+  --border: #CBD5E1;
+  --border-subtle: #E2E8F0;
+  --brand: #0F766E;
+  --brand-hover: #115E59;
+  --text-primary: #090D16;
+  --text-secondary: #334155;
+  --text-muted: #475569;
+  --success: #15803D;
+  --warning: #B45309;
+  --error: #B91C1C;
   --font-heading: "Plus Jakarta Sans", "Inter", -apple-system, sans-serif;
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-serif: "Newsreader", Georgia, serif;
 }
 
 body {
@@ -37,82 +34,33 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Dark mode theme styles ("True Dark Black") */
-.dark {
-  --background: #050505;
-  --foreground: #F2ECE1;
-  --surface: #0D0D0E;
-  --surface-secondary: #141416;
-  --border: #222226;
-  --border-subtle: #1A1A1D;
-  --navy: #151C20;
-  --teal: #2A4846;
-  --accent: #C06C47;
-  --sienna: #C06C47;
-  --brass: #D49D4F;
-  --text-primary: #F2ECE1;
-  --text-secondary: #9E9689;
-  --success: #3E7C57;
-  --warning: #C48E33;
-  --error: #C24A4A;
-}
-
-.dark body {
-  color: #F2ECE1;
-  background-color: #050505;
-}
-
-.dark h1, .dark h2, .dark h3, .dark h4, .dark h5, .dark h6, .dark .font-heading {
-  color: #F2ECE1;
-}
-
-.dark label {
-  color: #D6CEC2;
-}
-
-.dark input, .dark select, .dark textarea {
-  color: #F2ECE1;
-  background-color: #0D0D0E;
-  border-color: #222226;
-}
-
-/* Headings with Plus Jakarta Sans */
+/* Crisp Headings with solid typography */
 h1, h2, h3, h4, h5, h6, .font-heading {
   font-family: var(--font-heading);
-  color: #18212B;
-  letter-spacing: -0.022em;
+  color: #090D16;
+  letter-spacing: -0.025em;
   font-weight: 700;
 }
 
-/* Wordmark with restrained editorial accent */
-.font-wordmark {
-  font-family: var(--font-serif);
-}
-
 label {
-  color: #18212B;
+  color: #090D16;
   font-weight: 600;
   font-family: var(--font-sans);
 }
 
 input, select, textarea {
-  color: #28211B;
-  background-color: #FAF6F0;
-  border-color: #DCD2C0;
+  color: #090D16;
+  background-color: #FFFFFF;
+  border-color: #CBD5E1;
   font-weight: 500;
 }
 
 ::selection {
-  background-color: rgba(140, 67, 39, 0.18);
-  color: #28211B;
+  background-color: rgba(15, 118, 110, 0.2);
+  color: #090D16;
 }
 
-.dark ::selection {
-  background-color: rgba(192, 108, 71, 0.3);
-  color: #F2ECE1;
-}
-
-/* Subtle, accessible clinical pulse */
+/* Accessible clinical pulse */
 @keyframes pulse-subtle {
   0%, 100% {
     opacity: 1;
@@ -128,32 +76,23 @@ input, select, textarea {
   animation: pulse-subtle 2.5s infinite ease-in-out;
 }
 
-/* Vintage Ledger Scrollbar */
+/* Minimal Sleek Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #F5EFE6;
-}
-
-.dark ::-webkit-scrollbar-track {
-  background: #050505;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #CFC2AE;
-  border-radius: 9999px;
-}
-
-.dark ::-webkit-scrollbar-thumb {
-  background: #222226;
+  background: #CBD5E1;
   border-radius: 9999px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #8C4327;
+  background: #94A3B8;
 }
 
 /* Command rule editor styles - Clean & Human-designed */
@@ -161,12 +100,8 @@ input, select, textarea {
   transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .nv-rule-card:focus-within {
-  border-color: #183A4A;
-  box-shadow: 0 0 0 1px #183A4A;
-}
-.dark .nv-rule-card:focus-within {
-  border-color: #437E84;
-  box-shadow: 0 0 0 1px #437E84;
+  border-color: #0F766E;
+  box-shadow: 0 0 0 1px #0F766E;
 }
 
 .nv-rule-card[data-leaving="true"] {
@@ -180,12 +115,12 @@ input, select, textarea {
 
 /* Matching row in "Try a gesture" */
 @keyframes nv-rule-match {
-  0%, 100% { background-color: #EAF3EF; }
-  50% { background-color: #D3E8DE; }
+  0%, 100% { background-color: #F0FDF4; }
+  50% { background-color: #DCFCE7; }
 }
 .nv-rule-match {
-  border-color: #287A59 !important;
-  background-color: #EAF3EF;
+  border-color: #16A34A !important;
+  background-color: #F0FDF4;
   animation: nv-rule-match 0.8s ease 2;
 }
 

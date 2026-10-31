@@ -78,13 +78,20 @@ export const acknowledgeConfigSchema = z
   );
 
 // Device Heartbeat Schema
-export const deviceHeartbeatSchema = z.object({
-  deviceId: z.string().trim().optional(),
-  hardwareId: z.string().trim().optional(),
-  firmwareVersion: z.string().trim().max(30).optional(),
-  configVersionApplied: z.coerce.number().int().min(1).optional(),
-  timestamp: z.union([z.string(), z.number()]).optional(),
-});
+export const deviceHeartbeatSchema = z
+  .object({
+    deviceId: z.string().trim().optional(),
+    hardwareId: z.string().trim().optional(),
+    firmwareVersion: z.string().trim().max(30).optional(),
+    configVersionApplied: z.coerce.number().int().min(1).optional(),
+    batteryLevel: z.coerce.number().optional(),
+    battery: z.coerce.number().optional(),
+    batteryLevelPct: z.coerce.number().optional(),
+    batteryPct: z.coerce.number().optional(),
+    batt: z.coerce.number().optional(),
+    timestamp: z.union([z.string(), z.number()]).optional(),
+  })
+  .passthrough();
 
 // Patient Schemas
 export const createPatientSchema = z.object({
@@ -162,32 +169,52 @@ export const createConfigSchema = z
   );
 
 // Phase 4: Device Event & Care Request Schemas
-export const deviceEventSchema = z.object({
-  eventId: z.string().trim().min(1, "eventId is required").max(100),
-  deviceId: z.string().trim().min(1, "deviceId is required"),
-  eventType: z.string().trim().optional(),
-  gestureId: z.string().trim().max(64).optional(),
-  gesture: z.string().trim().max(64).optional(),
-  action: z.string().trim().optional(),
+export const deviceEventSchema = z
+  .object({
+    eventId: z.string().trim().max(100).optional(),
+    deviceId: z.string().trim().optional(),
+    eventType: z.string().trim().optional(),
+    gestureId: z.string().trim().max(64).optional(),
+    gesture: z.string().trim().max(64).optional(),
+    action: z.string().trim().optional(),
+    urgent: z.boolean().optional(),
+    configVersion: z.coerce.number().int().min(1, "configVersion must be a positive integer").optional(),
+    occurredAt: z.union([z.string(), z.number()]).optional(),
+    appliedVersion: z.coerce.number().int().optional(),
+    timestamp: z.union([z.string(), z.number()]).optional(),
+    batteryLevel: z.coerce.number().optional(),
+    battery: z.coerce.number().optional(),
+    batteryLevelPct: z.coerce.number().optional(),
+    batteryPct: z.coerce.number().optional(),
+    batt: z.coerce.number().optional(),
+    // Firmware nv-4.0.0 & nv-5.0.0 command rules
+    ruleId: z.string().trim().max(24).optional(),
+    label: z.string().max(40).optional(),
+    alarm: z.boolean().optional(),
+    counts: z
+      .object({
+        eog: z.coerce.number().int().min(0).default(0),
+        emgLeft: z.coerce.number().int().min(0).default(0),
+        emgRight: z.coerce.number().int().min(0).default(0),
+        together: z.coerce.number().int().min(0).default(0),
+      })
+      .optional(),
+    rejectedVersion: z.coerce.number().int().optional(),
+    error: z.string().max(200).optional(),
+  })
+  .passthrough();
+
+// NetraVaani nv-5.0.0 commands schema
+export const deviceCommandInputSchema = z.object({
+  id: z.string(),
+  label: z.string().min(1).max(40),
+  displayLabel: z.string().max(80).optional().nullable().transform((v) => v ?? undefined),
+  speechTemplate: z.string().max(120).optional().nullable().transform((v) => v ?? undefined),
   urgent: z.boolean().optional(),
-  configVersion: z.coerce.number().int().min(1, "configVersion must be a positive integer").optional(),
-  occurredAt: z.union([z.string(), z.number()]).optional(),
-  appliedVersion: z.coerce.number().int().optional(),
-  timestamp: z.union([z.string(), z.number()]).optional(),
-  // Firmware nv-4.0.0 command rules
-  ruleId: z.string().trim().max(24).optional(),
-  label: z.string().max(40).optional(),
   alarm: z.boolean().optional(),
-  counts: z
-    .object({
-      eog: z.coerce.number().int().min(0).default(0),
-      emgLeft: z.coerce.number().int().min(0).default(0),
-      emgRight: z.coerce.number().int().min(0).default(0),
-      together: z.coerce.number().int().min(0).default(0),
-    })
-    .optional(),
-  rejectedVersion: z.coerce.number().int().optional(),
-  error: z.string().max(200).optional(),
+});
+export const saveDeviceCommandsSchema = z.object({
+  commands: z.array(deviceCommandInputSchema).length(7),
 });
 
 // Command rule editor (PUT /api/devices/:id/rules). Only the shape is checked

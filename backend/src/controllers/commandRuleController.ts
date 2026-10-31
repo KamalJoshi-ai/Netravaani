@@ -12,7 +12,8 @@ const savedBy = (req: Request) => {
 /** GET /api/devices/:deviceId/config: the device downloads this (compact JSON, no envelope). */
 export const getDeviceConfigPayload = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
   try {
-    const payload = await commandRuleService.getDevicePayload(req.params.deviceId);
+    const bearer = req.headers.authorization?.replace(/^Bearer\s+/i, "").trim();
+    const payload = await commandRuleService.getDevicePayload(req.params.deviceId, bearer);
     if (!payload) {
       res.status(404).json({ status: "error", code: "NO_CONFIG", message: "No configuration yet" });
       return;

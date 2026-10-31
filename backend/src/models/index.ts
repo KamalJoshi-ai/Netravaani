@@ -6,4 +6,6 @@ export * from "./CareRequest.js";
 export * from "./User.js";
 export * from "./Nurse.js";
 export * from "./CommandRule.js";
+export * from "./DeviceCommand.js";
 export * from "./Bed.js";
+export * from "./PatientCommunicationState.js";

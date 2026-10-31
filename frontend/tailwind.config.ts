@@ -10,85 +10,98 @@ export default {
   theme: {
     extend: {
       colors: {
-        page: "#F5EFE6",           // Warm aged parchment
-        surface: "#FAF6F0",        // Pure ivory ledger card
-        surfaceSecondary: "#ECE3D4", // Vintage vellum well / muted tray
-        border: "#DCD2C0",         // Fine antique rule border
-        borderSubtle: "#E8E0D2",
+        // Unified Clinical Modern Palette - High Contrast Solid Light
+        canvas: {
+          light: "#EEF2F6",
+          dark: "#EEF2F6",
+        },
+        surface: {
+          light: "#FFFFFF",
+          mutedLight: "#E2E8F0",
+          dark: "#FFFFFF",
+          mutedDark: "#E2E8F0",
+        },
+        border: {
+          light: "#CBD5E1",
+          subtleLight: "#E2E8F0",
+          dark: "#CBD5E1",
+          subtleDark: "#E2E8F0",
+        },
+        brand: {
+          DEFAULT: "#0F766E",
+          hover: "#115E59",
+          light: "#E6FFFA",
+          dark: "#0F766E",
+          darkHover: "#115E59",
+        },
         ink: {
-          DEFAULT: "#28211B",      // Deep antique charcoal-sepia ink
-          primary: "#28211B",
-          secondary: "#6F6256",    // Aged sepia secondary
-          muted: "#6F6256",
-          faint: "#96887B",
+          primary: "#090D16",
+          secondary: "#334155",
+          muted: "#475569",
+          faint: "#64748B",
+          darkPrimary: "#090D16",
+          darkSecondary: "#334155",
+          darkMuted: "#475569",
         },
-        vintage: {
-          sienna: "#8C4327",       // Saddle sienna / leather accent
-          terracotta: "#A35232",
-          navy: "#1D2D38",         // Deep heritage seal navy
-          brass: "#B88738",        // Antique brass / warm gold
-          paper: "#F5EFE6",
-          cream: "#FAF6F0",
-          vellum: "#ECE3D4",
-          leather: "#4A3525",
-        },
+        // Backward-compatibility aliases mapped to modern tokens
+        page: "#EEF2F6",
+        surfaceSecondary: "#E2E8F0",
+        borderSubtle: "#CBD5E1",
         navy: {
-          DEFAULT: "#1D2D38",      // Primary heritage seal navy
-          hover: "#142028",
-          active: "#0F181E",
-          light: "#E9EEF0",
-          border: "#C5D2D8",
+          DEFAULT: "#0F766E",
+          hover: "#0D655E",
+          active: "#0B534D",
+          light: "#F0FDFA",
+          border: "#CCFBF1",
         },
         teal: {
-          DEFAULT: "#345C5A",      // Heritage muted sage/teal
-          hover: "#264443",
-          light: "#E7EFEF",
-          border: "#AFC5C4",
+          DEFAULT: "#0F766E",
+          hover: "#0D655E",
+          light: "#F0FDFA",
+          border: "#CCFBF1",
         },
         accent: {
-          DEFAULT: "#8C4327",      // Warm Sienna Accent
-          hover: "#73341C",
-          light: "#F7EFEB",
+          DEFAULT: "#0F766E",
+          hover: "#0D655E",
+          light: "#F0FDFA",
         },
         semantic: {
-          success: "#2E6243",      // Vintage forest green
-          successBg: "#EBF3ED",
-          successBorder: "#BCD5C4",
-          warning: "#A36F1C",      // Antique brass / ochre
-          warningBg: "#FAF4E8",
-          warningBorder: "#E8D2A8",
-          error: "#9E3232",        // Vintage crimson
-          errorBg: "#FAEEEE",
-          errorBorder: "#E8BCBC",
+          success: "#16A34A",
+          successBg: "#F0FDF4",
+          successBorder: "#DCFCE7",
+          warning: "#D97706",
+          warningBg: "#FFFBEB",
+          warningBorder: "#FEF3C7",
+          error: "#DC2626",
+          errorBg: "#FEF2F2",
+          errorBorder: "#FEE2E2",
         },
-        // Dark Mode equivalents ("True Dark Black")
         dark: {
-          page: "#050505",
-          surface: "#0D0D0E",
-          surfaceSecondary: "#141416",
-          border: "#222226",
-          text: "#F2ECE1",
-          muted: "#9E9689",
+          page: "#0A0D14",
+          surface: "#111622",
+          surfaceSecondary: "#182030",
+          border: "#1E2738",
+          text: "#F8FAFC",
+          muted: "#94A3B8",
         },
       },
       fontFamily: {
         heading: ["var(--font-heading)", "'Plus Jakarta Sans'", "'Inter'", "sans-serif"],
         sans: ["var(--font-sans)", "'Inter'", "-apple-system", "BlinkMacSystemFont", "sans-serif"],
-        serif: ["var(--font-serif)", "'Newsreader'", "Georgia", "serif"],
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
       },
       borderRadius: {
-        sm: "6px",
-        md: "8px",
-        lg: "10px",
+        sm: "4px",
+        md: "6px",
+        lg: "8px",
         xl: "12px",
         "2xl": "16px",
       },
       boxShadow: {
-        xs: "0 1px 2px 0 rgba(24, 33, 43, 0.04)",
-        subtle: "0 1px 3px 0 rgba(24, 33, 43, 0.05), 0 1px 2px -1px rgba(24, 33, 43, 0.03)",
-        card: "0 1px 4px 0 rgba(24, 33, 43, 0.05), 0 2px 8px -2px rgba(24, 33, 43, 0.04)",
-        dropdown: "0 10px 25px -5px rgba(24, 33, 43, 0.1), 0 8px 10px -6px rgba(24, 33, 43, 0.05)",
+        xs: "0 1px 2px 0 rgba(15, 23, 42, 0.04)",
+        subtle: "0 1px 3px 0 rgba(15, 23, 42, 0.05), 0 1px 2px -1px rgba(15, 23, 42, 0.03)",
+        card: "0 1px 3px 0 rgba(15, 23, 42, 0.04), 0 4px 6px -2px rgba(15, 23, 42, 0.02)",
+        dropdown: "0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.04)",
       },
     },
   },

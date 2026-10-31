@@ -2,6 +2,7 @@ import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { patientService, PREDEFINED_COMMANDS } from "../services/patientService.js";
 import { assignmentService } from "../services/assignmentService.js";
+import { patientCommunicationService } from "../services/patientCommunicationService.js";
 import { Patient } from "../models/Patient.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
 import { AppError } from "../middleware/errorHandler.js";
@@ -336,4 +337,22 @@ export const updatePatientConfirmationSettings = async (
     next(err);
   }
 };
+
+export const getPatientCommunicationState = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    const { patientCode } = req.params;
+    const state = await patientCommunicationService.getForActivePatient(patientCode);
+    res.status(200).json({
+      status: "success",
+      data: state,
+    });
+  } catch (err) {
+    next(err);
+  }
+};
+
 

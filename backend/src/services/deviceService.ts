@@ -3,9 +3,11 @@ import crypto from "crypto";
 import { Device, IDevice, DeviceStatus, DeviceConnectivityStatus } from "../models/Device.js";
 import { DeviceAssignment, IDeviceAssignment } from "../models/DeviceAssignment.js";
 import { Patient } from "../models/Patient.js";
+import { PatientCommunicationState } from "../models/PatientCommunicationState.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { runInTransaction } from "../lib/transaction.js";
 import { commandRuleService } from "./commandRuleService.js";
+import { deviceCommandService } from "./deviceCommandService.js";
 
 const generateDeviceId = customAlphabet("0123456789abcdef", 8);
 
@@ -266,6 +268,15 @@ export class DeviceService {
       .populate("patient", "patientCode displayName bedLabel status")
       .lean();
 
+    const assignmentIds = activeAssignments.map((a) => a._id);
+    const commStates = await PatientCommunicationState.find({
+      assignment: { $in: assignmentIds },
+    }).lean();
+    const commStateMap = new Map();
+    commStates.forEach((cs) => {
+      commStateMap.set(cs.assignment.toString(), cs);
+    });
+
     const assignmentMap = new Map();
     activeAssignments.forEach((assign) => {
       assignmentMap.set(assign.device.toString(), assign);
@@ -273,10 +284,13 @@ export class DeviceService {
 
     let items = devices.map((d) => {
       const liveConnectivity = this.computeConnectivity(d);
+      const currentAssignment = assignmentMap.get(d._id.toString()) || null;
+      const communicationState = currentAssignment ? commStateMap.get(currentAssignment._id.toString()) || null : null;
       return {
         ...d,
         connectivityStatus: liveConnectivity,
-        currentAssignment: assignmentMap.get(d._id.toString()) || null,
+        currentAssignment,
+        communicationState,
       };
     });
 
@@ -319,11 +333,15 @@ export class DeviceService {
 
   async recordHeartbeat(
     identifier: string,
-    data: HeartbeatDto
+    data: HeartbeatDto,
+    bearerToken?: string
   ): Promise<{ device: IDevice; silenceAlarm: boolean }> {
-    let device = await Device.findOne({ deviceId: identifier });
-    if (!device) {
-      device = await Device.findOne({ hardwareId: identifier });
+    let device: IDevice | null = null;
+    if (identifier) {
+      device = await Device.findOne({ deviceId: identifier });
+      if (!device) {
+        device = await Device.findOne({ hardwareId: identifier });
+      }
     }
     if (!device && data.deviceId) {
       device = await Device.findOne({ deviceId: data.deviceId });
@@ -331,28 +349,23 @@ export class DeviceService {
     if (!device && data.hardwareId) {
       device = await Device.findOne({ hardwareId: data.hardwareId });
     }
+    if (!device && bearerToken) {
+      device = await Device.findOne({ token: bearerToken });
+    }
 
     if (!device) {
-      throw new AppError(404, "DEVICE_NOT_FOUND", `Device '${identifier || data.deviceId || data.hardwareId}' not found`);
+      throw new AppError(404, "DEVICE_NOT_FOUND", `Device '${identifier || data.deviceId || data.hardwareId || "token"}' not found`);
     }
 
     if (device.status === "DISABLED") {
       throw new AppError(400, "DEVICE_DISABLED", `Cannot process heartbeat for disabled device '${device.deviceId}'`);
     }
 
-    if (data.deviceId && identifier && data.deviceId !== identifier) {
+    if (data.deviceId && identifier && data.deviceId !== identifier && data.deviceId !== device.deviceId && data.deviceId !== device.hardwareId) {
       throw new AppError(
         400,
         "DEVICE_ID_MISMATCH",
         `Payload deviceId '${data.deviceId}' does not match route deviceId '${identifier}'`
-      );
-    }
-
-    if (data.deviceId && data.deviceId !== device.deviceId) {
-      throw new AppError(
-        400,
-        "DEVICE_ID_MISMATCH",
-        `Payload deviceId '${data.deviceId}' does not match target device '${device.deviceId}'`
       );
     }
 
@@ -365,8 +378,30 @@ export class DeviceService {
       device.firmwareVersion = data.firmwareVersion;
     }
 
+    const rawBattery =
+      (data as any).batteryLevel ??
+      (data as any).battery ??
+      (data as any).batteryLevelPct ??
+      (data as any).batteryPct ??
+      (data as any).batt ??
+      (data as any).battery_level;
+
+    if (rawBattery !== undefined && rawBattery !== null && !isNaN(Number(rawBattery))) {
+      const numBatt = Number(rawBattery);
+      if (numBatt > 0 && numBatt <= 5.0) {
+        // Battery voltage reading (e.g. 3.3V to 4.2V LiPo -> 0% to 100%)
+        device.batteryLevel = Math.max(0, Math.min(100, Math.round(((numBatt - 3.3) / 0.9) * 100)));
+      } else {
+        device.batteryLevel = Math.max(0, Math.min(100, Math.round(numBatt)));
+      }
+    }
+
     if (data.configVersionApplied && data.configVersionApplied >= 1) {
       device.appliedConfigVersion = data.configVersionApplied;
+    }
+
+    if (!device.desiredConfigVersion) {
+      device.desiredConfigVersion = device.appliedConfigVersion || 1;
     }
 
     const silenceAlarm = Boolean(device.silenceAlarmPending);
@@ -374,8 +409,10 @@ export class DeviceService {
       device.silenceAlarmPending = false;
     }
 
-    // Note: Patient assignment is strictly preserved. Existing care requests are unchanged.
     await device.save();
+
+    // Ensure 7 commands are initialized
+
     return { device, silenceAlarm };
   }
 

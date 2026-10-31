@@ -14,8 +14,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body className="bg-[#F7F6F2] dark:bg-[#0E151E] text-[#18212B] dark:text-[#F0F4F7] font-sans antialiased min-h-screen selection:bg-[#B9D8D2]/40">
+    <html lang="en" className="light">
+      <body className="bg-[#EEF2F6] text-slate-900 font-sans antialiased min-h-screen">
         <ThemeProvider>
           <AuthProvider>{children}</AuthProvider>
         </ThemeProvider>

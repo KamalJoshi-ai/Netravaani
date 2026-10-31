@@ -13,8 +13,10 @@ export const ingestDeviceEvent = async (
   next: NextFunction
 ): Promise<void> => {
   try {
+    const authHeader = req.headers.authorization;
+    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7).trim() : undefined;
     const validated = deviceEventSchema.parse(req.body);
-    const result = await careRequestService.ingestDeviceEvent(validated);
+    const result = await careRequestService.ingestDeviceEvent(validated, bearerToken);
 
     if (result.isDuplicate) {
       res.status(200).json({
@@ -22,7 +24,19 @@ export const ingestDeviceEvent = async (
         message: "Event already processed (deduplicated)",
         duplicate: true,
         isDuplicate: true,
+        accepted: true,
         data: result.careRequest,
+      });
+      return;
+    }
+
+    if (result.accepted === false) {
+      res.status(200).json({
+        status: "success",
+        accepted: false,
+        reason: result.reason || "REJECTED",
+        message: result.message || "Event not accepted",
+        isDuplicate: false,
       });
       return;
     }
@@ -31,6 +45,8 @@ export const ingestDeviceEvent = async (
       res.status(201).json({
         status: "success",
         accepted: true,
+        message: result.message,
+        isDuplicate: false,
       });
       return;
     }

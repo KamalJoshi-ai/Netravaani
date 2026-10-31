@@ -15,6 +15,7 @@ export interface IDevice extends Document {
   status: DeviceStatus;
   connectivityStatus: DeviceConnectivityStatus;
   firmwareVersion?: string;
+  batteryLevel?: number;
   lastSeenAt?: Date;
   desiredConfigVersion?: number;
   appliedConfigVersion?: number;
@@ -71,6 +72,11 @@ const DeviceSchema = new Schema<IDevice>(
     firmwareVersion: {
       type: String,
       trim: true,
+    },
+    batteryLevel: {
+      type: Number,
+      min: 0,
+      max: 100,
     },
     lastSeenAt: {
       type: Date,

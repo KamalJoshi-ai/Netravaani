@@ -15,6 +15,7 @@ import {
   allocateDeviceToPatient,
   deallocateDeviceFromPatient,
   updatePatientConfirmationSettings,
+  getPatientCommunicationState,
 } from "../controllers/patientController.js";
 import {
   proposeBedChange,
@@ -51,6 +52,7 @@ patientRouter.get("/me", getPatientMe);
 patientRouter.post("/", createPatient);
 patientRouter.get("/", listPatients);
 patientRouter.get("/:patientCode", getPatient);
+patientRouter.get("/:patientCode/communication-state", getPatientCommunicationState);
 
 // Nurse Assignment Workflow (Allocate by Nurse, Request, Approve, Deallocate)
 patientRouter.post("/:patientCode/request-nurse", requestNurse);

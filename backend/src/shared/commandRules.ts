@@ -50,13 +50,19 @@ export function validateRule(r: CommandRule): string | null {
 
 const overlap = (a: Range, b: Range) => a[0] <= b[1] && b[0] <= a[1];
 
-// A squeeze rule whose blink range is 0-0 also accepts a few natural blinks.
+// A squeeze rule whose blink range is 0-0 also accepts natural/reflexive blinks
+// (strain, concentration, normal blinking during a 1-2 s squeeze hold) without
+// those blinks counting against it. incidentalBlinks defaults to COUNT_MAX:
+// a squeeze gesture is a hand command, and the number of blinks that happen
+// alongside it is not part of the intended signal, so by default essentially
+// any number is tolerated. A rule that genuinely combines a specific blink
+// count with a squeeze (eog max > 0) is never affected by this value.
 function effectiveEog(r: CommandRule, incidentalBlinks: number): Range {
   if (r.eog[1] === 0 && r.emgLeft[0] + r.emgRight[0] >= 1) return [r.eog[0], incidentalBlinks];
   return r.eog;
 }
 
-export function rulesConflict(a: CommandRule, b: CommandRule, incidentalBlinks = 1): boolean {
+export function rulesConflict(a: CommandRule, b: CommandRule, incidentalBlinks = COUNT_MAX): boolean {
   const box =
     overlap(effectiveEog(a, incidentalBlinks), effectiveEog(b, incidentalBlinks)) &&
     overlap(a.emgLeft, b.emgLeft) &&
@@ -68,7 +74,23 @@ export function rulesConflict(a: CommandRule, b: CommandRule, incidentalBlinks =
 
 export interface RuleSetError { message: string; rules: number[] } // 0-based indices
 
-export function validateRuleSet(rules: CommandRule[], incidentalBlinks = 1): RuleSetError | null {
+export const MANDATORY_COMMAND_IDS = ["yes", "no", "emergency"] as const;
+
+export function isMandatoryRule(r: { id?: string; label?: string; alarm?: boolean }): boolean {
+  const id = (r.id || "").toLowerCase().trim();
+  const label = (r.label || "").toLowerCase().trim();
+  return (
+    id === "yes" ||
+    label === "yes" ||
+    id === "no" ||
+    label === "no" ||
+    id === "emergency" ||
+    label.includes("emergency") ||
+    Boolean(r.alarm)
+  );
+}
+
+export function validateRuleSet(rules: CommandRule[], incidentalBlinks = COUNT_MAX): RuleSetError | null {
   if (rules.length < 1 || rules.length > MAX_RULES) return { message: "a rule set needs 1 to 10 rules", rules: [] };
   let anyAlarm = false;
   for (let i = 0; i < rules.length; i++) {
@@ -82,13 +104,18 @@ export function validateRuleSet(rules: CommandRule[], incidentalBlinks = 1): Rul
     }
   }
   if (!anyAlarm) return { message: "at least one rule must raise the alarm (emergency safety)", rules: [] };
+  const hasYes = rules.some((r) => r.id === "yes" || r.label.trim().toUpperCase() === "YES");
+  const hasNo = rules.some((r) => r.id === "no" || r.label.trim().toUpperCase() === "NO");
+  if (!hasYes || !hasNo) {
+    return { message: "a rule set must include mandatory commands: YES and NO", rules: [] };
+  }
   return null;
 }
 
 // Which rule fires for an episode. pairs = how many left squeezes had a right squeeze
 // at the same time. Returns the rule index or -1.
 export function matchRule(rules: CommandRule[], blinks: number, left: number, right: number,
-                          pairs: number, incidentalBlinks = 1): number {
+                          pairs: number, incidentalBlinks = COUNT_MAX): number {
   const c = (n: number) => Math.min(n, COUNT_MAX);
   blinks = c(blinks); left = c(left); right = c(right);
   const allPaired = pairs === left && pairs === right && left > 0;
@@ -110,13 +137,45 @@ export function matchRule(rules: CommandRule[], blinks: number, left: number, ri
 /** Largest config response the device accepts (it stores it in a ~3,900-byte slot). */
 export const MAX_PAYLOAD_BYTES = 3500;
 
-/** The six rules every newly registered device starts with. */
+/** The six standard rules every newly registered device starts with (firmware nv-4.0.0). */
 export const DEFAULT_RULES: CommandRule[] = [
-  { id: "yes", label: "YES", eog: [2, 3], emgLeft: [0, 0], emgRight: [0, 0] },
-  { id: "no", label: "NO", eog: [0, 0], emgLeft: [1, 1], emgRight: [1, 1], simultaneous: true },
-  { id: "water", label: "WATER", eog: [4, 20], emgLeft: [0, 0], emgRight: [0, 0] },
-  { id: "call_nurse", label: "CALL NURSE", eog: [0, 0], emgLeft: [3, 3], emgRight: [0, 0], urgent: true },
-  { id: "adjustment", label: "ADJUSTMENT", eog: [0, 0], emgLeft: [0, 0], emgRight: [3, 3] },
+  {
+    id: "yes",
+    label: "YES",
+    eog: [3, 4],
+    emgLeft: [0, 0],
+    emgRight: [0, 0],
+  },
+  {
+    id: "no",
+    label: "NO",
+    eog: [0, 0],
+    emgLeft: [1, 2],
+    emgRight: [1, 2],
+    simultaneous: true,
+  },
+  {
+    id: "water",
+    label: "WATER",
+    eog: [5, 20],
+    emgLeft: [0, 0],
+    emgRight: [0, 0],
+  },
+  {
+    id: "call_nurse",
+    label: "CALL NURSE",
+    eog: [0, 0],
+    emgLeft: [3, 20],
+    emgRight: [0, 0],
+    urgent: true,
+  },
+  {
+    id: "adjustment",
+    label: "ADJUSTMENT",
+    eog: [0, 0],
+    emgLeft: [0, 0],
+    emgRight: [3, 20],
+  },
   {
     id: "emergency",
     label: "EMERGENCY / SEVERE PAIN",
@@ -167,7 +226,7 @@ export function payloadBytes(payload: DeviceConfigPayload): number {
  * Every problem in a rule set at once, for the editor. The server still makes
  * its yes/no decision with validateRuleSet above.
  */
-export function validateRuleSetAll(rules: CommandRule[], incidentalBlinks = 1): RuleSetError[] {
+export function validateRuleSetAll(rules: CommandRule[], incidentalBlinks = COUNT_MAX): RuleSetError[] {
   const errors: RuleSetError[] = [];
   if (rules.length < 1 || rules.length > MAX_RULES) errors.push({ message: "a rule set needs 1 to 10 rules", rules: [] });
   rules.forEach((r, i) => {
@@ -183,5 +242,9 @@ export function validateRuleSetAll(rules: CommandRule[], incidentalBlinks = 1): 
   }
   if (rules.length > 0 && !rules.some((r) => r.alarm))
     errors.push({ message: "at least one rule must raise the alarm (emergency safety)", rules: [] });
+  if (rules.length > 0 && !rules.some((r) => r.id === "yes" || r.label.trim().toUpperCase() === "YES"))
+    errors.push({ message: "mandatory command missing: YES", rules: [] });
+  if (rules.length > 0 && !rules.some((r) => r.id === "no" || r.label.trim().toUpperCase() === "NO"))
+    errors.push({ message: "mandatory command missing: NO", rules: [] });
   return errors;
 }

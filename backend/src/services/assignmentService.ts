@@ -4,6 +4,7 @@ import { Patient } from "../models/Patient.js";
 import { DeviceAssignment, IDeviceAssignment } from "../models/DeviceAssignment.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { deviceService } from "./deviceService.js";
+import { patientCommunicationService } from "./patientCommunicationService.js";
 
 export interface AssignDeviceDto {
   deviceId: string;
@@ -108,6 +109,9 @@ export class AssignmentService {
         assignedAt: new Date(),
         isActive: true,
       });
+
+      // Initialize fresh mandatory handshake communication state for this patient-device assignment
+      await patientCommunicationService.getOrCreateForAssignment(assignment);
 
       const populated = await assignment.populate([
         { path: "device", select: "deviceId name status" },

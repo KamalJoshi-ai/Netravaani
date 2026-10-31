@@ -3,6 +3,7 @@ import { env } from "./config/env.js";
 import { connectDatabase } from "./lib/db.js";
 import { startConnectivityWatchdog, stopConnectivityWatchdog } from "./services/deviceService.js";
 import { commandRuleService } from "./services/commandRuleService.js";
+import { deviceCommandService } from "./services/deviceCommandService.js";
 
 // NetraVaani Clinical Backend Server - v2.1.0 with Patient Bedside Auth
 async function bootstrap() {
@@ -10,6 +11,12 @@ async function bootstrap() {
 
   try {
     await connectDatabase(env.MONGODB_URI);
+    // Backfill nv-5.0.0 per-device commands and compact config payload
+    deviceCommandService
+      .backfillDefaults()
+      .then((n) => n > 0 && console.log(`[Migration] Backfilled nv-5.0.0 commands and config on ${n} device(s)`))
+      .catch((e) => console.error("[Migration] Device commands backfill failed:", e));
+
     // Migration 2026-10-19-command-rules: devices without command rules get the defaults.
     commandRuleService
       .backfillDefaults()

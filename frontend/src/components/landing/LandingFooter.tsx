@@ -8,34 +8,34 @@ interface LandingFooterProps {
 
 export default function LandingFooter({ onOpenAuth }: LandingFooterProps) {
   return (
-    <footer id="safety" className="bg-white dark:bg-[#0B0F19] text-[#0F172A] dark:text-[#F8FAFC] border-t border-[#E2E8F0] dark:border-[#1E293B] transition-colors duration-150">
+    <footer id="safety" className="bg-white  text-slate-900  border-t border-slate-300  transition-colors duration-150">
       
-      {/* High-Impact Bottom Conversion Banner */}
-      <div className="border-b border-[#E2E8F0] dark:border-[#1E293B] py-14 sm:py-18 bg-[#F8FAFC] dark:bg-[#131B2E]">
-        <div className="max-w-4xl mx-auto px-4 text-center space-y-5">
-          <div className="w-12 h-12 rounded-2xl bg-[#059669] text-white flex items-center justify-center font-black text-base mx-auto shadow-md">
+      {/* Conversion Banner */}
+      <div className="border-b border-slate-300  py-12 sm:py-16 bg-[#EEF2F6]/60 ">
+        <div className="max-w-3xl mx-auto px-4 text-center space-y-4">
+          <div className="w-10 h-10 rounded-lg bg-teal-700  text-white flex items-center justify-center font-bold text-sm mx-auto shadow-xs">
             NV
           </div>
-          <h2 className="text-2xl sm:text-4xl font-extrabold tracking-tight text-[#0F172A] dark:text-[#F8FAFC]">
-            Ready to Bring Voice and Independence to Your Patients?
+          <h2 className="text-xl sm:text-3xl font-bold tracking-tight text-slate-900 ">
+            Restore communication and autonomy at the bedside.
           </h2>
-          <p className="text-xs sm:text-sm text-[#475569] dark:text-[#94A3B8] max-w-xl mx-auto leading-relaxed">
-            Join hundreds of families, rehabilitation specialists, and clinical nurses using NetraVaani to restore human connection.
+          <p className="text-xs sm:text-sm text-slate-700  max-w-lg mx-auto leading-relaxed">
+            Designed for motor-impaired and ICU patients, clinical nurses, and care teams.
           </p>
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
             <button
               type="button"
               onClick={() => onOpenAuth("signup")}
-              className="w-full sm:w-auto px-7 py-3.5 rounded-xl text-sm font-bold bg-[#059669] hover:bg-[#047857] text-white transition shadow-md"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-lg text-xs font-semibold bg-teal-700 hover:bg-teal-800  :bg-teal-500 text-white transition shadow-xs"
             >
               Become a Member Today &rarr;
             </button>
             <button
               type="button"
               onClick={() => onOpenAuth("login")}
-              className="w-full sm:w-auto px-6 py-3.5 rounded-xl text-sm font-semibold bg-white dark:bg-[#1E293B] border border-[#CBD5E1] dark:border-[#334155] text-[#0F172A] dark:text-[#F8FAFC] hover:border-[#059669] transition shadow-xs"
+              className="w-full sm:w-auto px-5 py-2.5 rounded-lg text-xs font-medium bg-white  border border-slate-300  text-slate-800  hover:bg-[#EEF2F6] :bg-slate-800 transition shadow-xs"
             >
-              Existing Member Sign In
+              Sign In to Your Station
             </button>
           </div>
         </div>
@@ -45,76 +45,71 @@ export default function LandingFooter({ onOpenAuth }: LandingFooterProps) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           
-          <div className="space-y-3 md:col-span-1">
+          <div className="space-y-2.5 md:col-span-1">
             <div className="flex items-center gap-2">
-              <div className="w-7 h-7 rounded-lg bg-[#059669] text-white flex items-center justify-center font-black text-xs shrink-0">
+              <div className="w-6 h-6 rounded-md bg-teal-700 text-white flex items-center justify-center font-bold text-xs shrink-0">
                 NV
               </div>
-              <span className="font-extrabold text-base tracking-tight text-[#0F172A] dark:text-[#F8FAFC]">
+              <span className="font-bold text-sm tracking-tight text-slate-900 ">
                 NetraVaani
               </span>
             </div>
-            <p className="text-xs text-[#64748B] dark:text-[#94A3B8] leading-relaxed">
-              Assistive Gaze &amp; Gesture Biometric Platform. Empowering locked-in, non-verbal, and ICU patients with instantaneous voice broadcasts.
+            <p className="text-xs text-slate-700  leading-relaxed">
+              Clinical Gaze &amp; Gesture Assistive Platform. Empowering locked-in and ICU patients with instantaneous voice broadcasts.
             </p>
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-xs font-bold text-[#0F172A] dark:text-[#F8FAFC] uppercase tracking-wider">
-              Product &amp; Tech
+            <h4 className="text-xs font-semibold text-slate-800 ">
+              Technology
             </h4>
-            <ul className="space-y-1.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
-              <li><a href="#hardware" className="hover:text-[#059669] transition">NPG Smart Eyewear</a></li>
-              <li><a href="#hardware" className="hover:text-[#059669] transition">Dual-Channel EOG Gaze</a></li>
-              <li><a href="#hardware" className="hover:text-[#059669] transition">Sub-Threshold EMG</a></li>
-              <li><a href="#simulator" className="hover:text-[#059669] transition">Bedside Voice Engine</a></li>
+            <ul className="space-y-1.5 text-xs text-slate-700 ">
+              <li><a href="#hardware" className="hover:text-teal-700 :text-teal-400 transition">NPG Eyewear Frame</a></li>
+              <li><a href="#hardware" className="hover:text-teal-700 :text-teal-400 transition">Dual-Channel EOG</a></li>
+              <li><a href="#hardware" className="hover:text-teal-700 :text-teal-400 transition">Sub-Threshold EMG</a></li>
+              <li><a href="#simulator" className="hover:text-teal-700 :text-teal-400 transition">Bedside Voice Engine</a></li>
             </ul>
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-xs font-bold text-[#0F172A] dark:text-[#F8FAFC] uppercase tracking-wider">
-              Membership
+            <h4 className="text-xs font-semibold text-slate-800 ">
+              Access
             </h4>
-            <ul className="space-y-1.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+            <ul className="space-y-1.5 text-xs text-slate-700 ">
               <li>
-                <button type="button" onClick={() => onOpenAuth("signup", "patient")} className="hover:text-[#059669] transition">
+                <button type="button" onClick={() => onOpenAuth("signup", "patient")} className="hover:text-teal-700 :text-teal-400 transition">
                   Patient Membership
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onOpenAuth("signup", "nurse")} className="hover:text-[#059669] transition">
+                <button type="button" onClick={() => onOpenAuth("signup", "nurse")} className="hover:text-teal-700 :text-teal-400 transition">
                   Clinical Nurse Access
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onOpenAuth("signup")} className="hover:text-[#059669] transition">
-                  Create Unique Account
-                </button>
-              </li>
-              <li>
-                <button type="button" onClick={() => onOpenAuth("login")} className="hover:text-[#059669] transition">
-                  Clinical Station Sign In
+                <button type="button" onClick={() => onOpenAuth("login")} className="hover:text-teal-700 :text-teal-400 transition">
+                  Station Sign In
                 </button>
               </li>
             </ul>
           </div>
 
           <div className="space-y-2">
-            <h4 className="text-xs font-bold text-[#0F172A] dark:text-[#F8FAFC] uppercase tracking-wider">
+            <h4 className="text-xs font-semibold text-slate-800 ">
               Clinical Safety
             </h4>
-            <ul className="space-y-1.5 text-xs text-[#64748B] dark:text-[#94A3B8]">
+            <ul className="space-y-1.5 text-xs text-slate-700 ">
               <li>1-to-1 Hardware Invariant</li>
               <li>Bedside Patient Authorization</li>
-              <li>HIPAA &amp; Audit Ready</li>
-              <li>Zero Duplicate Bed Collision</li>
+              <li>Collision-Free Telemetry</li>
+              <li>Zero Voice Control Barrier</li>
             </ul>
           </div>
 
         </div>
 
         {/* Regulatory & Copyright Notice */}
-        <div className="pt-8 mt-8 border-t border-[#E2E8F0] dark:border-[#1E293B] flex flex-col sm:flex-row items-center justify-between gap-3 text-[11px] text-[#64748B] dark:text-[#94A3B8]">
+        <div className="pt-6 mt-8 border-t border-slate-200  flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-700 ">
           <p>
             &copy; {new Date().getFullYear()} NetraVaani Clinical Systems. All rights reserved.
           </p>

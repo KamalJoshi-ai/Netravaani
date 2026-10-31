@@ -2,8 +2,10 @@ import {
   COUNT_MAX,
   CommandRule,
   DEFAULT_RULES,
+  MANDATORY_COMMAND_IDS,
   MAX_RULES,
   Range,
+  isMandatoryRule,
   matchRule,
   validateRuleSetAll,
 } from "@/lib/commandRules";
@@ -17,6 +19,126 @@ export interface EditorRule extends CommandRuleItem {
 
 export type Channel = "eog" | "emgLeft" | "emgRight";
 export type RangeMode = "exact" | "range" | "atLeast" | "off";
+
+export interface CanonicalGesture {
+  id: string;
+  gestureNumber: number;
+  title: string;
+  description: string;
+  sensorSummary: string;
+  eog: Range;
+  emgLeft: Range;
+  emgRight: Range;
+  simultaneous?: boolean;
+  urgent?: boolean;
+  alarm?: boolean;
+  defaultLabel: string;
+  defaultDisplayLabel: string;
+  defaultSpeechTemplate: string;
+}
+
+export const CANONICAL_GESTURES: CanonicalGesture[] = [
+  {
+    id: "yes",
+    gestureNumber: 1,
+    title: "3–4 blinks",
+    description: "Blink naturally 3 to 4 times (forehead EOG)",
+    sensorSummary: "Blinks 3–4",
+    eog: [3, 4],
+    emgLeft: [0, 0],
+    emgRight: [0, 0],
+    defaultLabel: "YES",
+    defaultDisplayLabel: "YES",
+    defaultSpeechTemplate: "Patient confirmed yes",
+  },
+  {
+    id: "no",
+    gestureNumber: 2,
+    title: "1–2 squeezes with both hands together",
+    description: "Squeeze both wrists simultaneously 1 to 2 times",
+    sensorSummary: "Both wrists ×1–2 together",
+    eog: [0, 0],
+    emgLeft: [1, 2],
+    emgRight: [1, 2],
+    simultaneous: true,
+    defaultLabel: "NO",
+    defaultDisplayLabel: "NO",
+    defaultSpeechTemplate: "Patient indicated no",
+  },
+  {
+    id: "water",
+    gestureNumber: 3,
+    title: "5+ blinks",
+    description: "Blink rapidly 5 or more times (forehead EOG)",
+    sensorSummary: "Blinks 5+",
+    eog: [5, 20],
+    emgLeft: [0, 0],
+    emgRight: [0, 0],
+    defaultLabel: "WATER",
+    defaultDisplayLabel: "Water",
+    defaultSpeechTemplate: "Patient requests water",
+  },
+  {
+    id: "call_nurse",
+    gestureNumber: 4,
+    title: "3+ left squeezes",
+    description: "Squeeze left wrist 3 or more times (within 5s)",
+    sensorSummary: "Left wrist ×3+",
+    eog: [0, 0],
+    emgLeft: [3, 20],
+    emgRight: [0, 0],
+    urgent: true,
+    defaultLabel: "CALL NURSE",
+    defaultDisplayLabel: "Call Nurse",
+    defaultSpeechTemplate: "Patient is calling the nurse",
+  },
+  {
+    id: "adjustment",
+    gestureNumber: 5,
+    title: "3+ right squeezes",
+    description: "Squeeze right wrist 3 or more times (within 5s)",
+    sensorSummary: "Right wrist ×3+",
+    eog: [0, 0],
+    emgLeft: [0, 0],
+    emgRight: [3, 20],
+    defaultLabel: "ADJUSTMENT",
+    defaultDisplayLabel: "Adjustment",
+    defaultSpeechTemplate: "Patient needs position adjustment",
+  },
+  {
+    id: "emergency",
+    gestureNumber: 6,
+    title: "3+ squeezes with both hands together",
+    description: "Squeeze both wrists simultaneously 3 or more times (Raises alarm & flashes red)",
+    sensorSummary: "Both wrists ×3+ together (Alarm)",
+    eog: [0, 0],
+    emgLeft: [3, 20],
+    emgRight: [3, 20],
+    simultaneous: true,
+    urgent: true,
+    alarm: true,
+    defaultLabel: "EMERGENCY / SEVERE PAIN",
+    defaultDisplayLabel: "EMERGENCY",
+    defaultSpeechTemplate: "EMERGENCY: Patient needs immediate medical help!",
+  },
+];
+
+export function matchCanonicalGesture(rule: { eog: Range; emgLeft: Range; emgRight: Range; simultaneous?: boolean; id?: string }): CanonicalGesture | undefined {
+  if (rule.id) {
+    const byId = CANONICAL_GESTURES.find((g) => g.id === rule.id);
+    if (byId) return byId;
+  }
+  return CANONICAL_GESTURES.find(
+    (g) =>
+      g.eog[0] === rule.eog[0] &&
+      g.eog[1] === rule.eog[1] &&
+      g.emgLeft[0] === rule.emgLeft[0] &&
+      g.emgLeft[1] === rule.emgLeft[1] &&
+      g.emgRight[0] === rule.emgRight[0] &&
+      g.emgRight[1] === rule.emgRight[1] &&
+      Boolean(g.simultaneous) === Boolean(rule.simultaneous)
+  );
+}
 
 export const CHANNELS: { key: Channel; title: string; short: string; unit: string }[] = [
   { key: "eog", title: "Forehead EOG", short: "Blinks", unit: "blink" },
@@ -116,13 +238,23 @@ function countPhrase([lo, hi]: Range): string {
   return `${lo} to ${hi} times`;
 }
 
-/** e.g. "Blink 4 or more times (no squeezes) → WATER" */
+/** e.g. "2–4 blinks, then 1 right squeeze (within 5s) → WATER" */
 export function describeRule(r: CommandRuleItem): string {
+  const name = r.displayLabel?.trim() || r.label || "this command";
+  const g = CANONICAL_GESTURES.find((x) => x.id === r.id);
+  const flags: string[] = [];
+  if (r.alarm) flags.push("raises alarm");
+  else if (r.urgent) flags.push("urgent");
+  const flagStr = flags.length ? ` (${flags.join(", ")})` : "";
+
+  if (g) {
+    return `${g.description} → ${name}${flagStr}`;
+  }
+
   const parts: string[] = [];
   const blink = rangeMode(r.eog) !== "off";
   const left = rangeMode(r.emgLeft) !== "off";
   const right = rangeMode(r.emgRight) !== "off";
-  const name = r.displayLabel?.trim() || r.label || "this command";
 
   if (blink) parts.push(`Blink ${countPhrase(r.eog)}`);
   if (r.simultaneous && left && right) {
@@ -142,10 +274,7 @@ export function describeRule(r: CommandRuleItem): string {
   sentence = sentence.charAt(0).toUpperCase() + sentence.slice(1);
   if (blink && !left && !right) sentence += " (no squeezes)";
 
-  const flags: string[] = [];
-  if (r.alarm) flags.push("raises alarm");
-  else if (r.urgent) flags.push("urgent");
-  return `${sentence} → ${name}${flags.length ? ` (${flags.join(", ")})` : ""}`;
+  return `${sentence} → ${name}${flagStr}`;
 }
 
 /* ---------------- validation for the editor ---------------- */
@@ -223,4 +352,4 @@ export function tryGesture(rules: EditorRule[], blinks: number, left: number, ri
   return matchRule(rules.map(toCommandRule) as CommandRule[], blinks, left, right, pairs);
 }
 
-export { MAX_RULES, COUNT_MAX };
+export { MAX_RULES, COUNT_MAX, MANDATORY_COMMAND_IDS, isMandatoryRule };

@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import { customAlphabet } from "nanoid";
 import jwt from "jsonwebtoken";
 import { Patient, IPatient, PatientStatus } from "../models/Patient.js";
@@ -5,7 +6,8 @@ import { Bed } from "../models/Bed.js";
 import User from "../models/User.js";
 import { DeviceAssignment } from "../models/DeviceAssignment.js";
 import { CareRequest } from "../models/CareRequest.js";
-import { broadcastBedsideAudio } from "./careRequestService.js";
+import { PatientCommunicationState } from "../models/PatientCommunicationState.js";
+import { broadcastBedsideAudio, MAX_ACTIVE_REQUESTS_PER_PATIENT } from "./careRequestService.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { env } from "../config/env.js";
 
@@ -21,54 +23,74 @@ export interface CreatePatientDto {
 
 export const PREDEFINED_COMMANDS = [
   {
-    action: "YES",
-    gestureId: "BLINK_2",
-    gestureName: "2 blinks, wait",
-    serialCommand: "[cmd] YES",
-    dashboardLabel: "YES",
-    instruction: "Blink twice and wait to indicate affirmative / yes.",
+    action: "BLINK_RIGHT",
+    gestureId: "BLINK_RIGHT",
+    gestureName: "Blink 2-4 times, squeeze right hand once",
+    serialCommand: "[cmd] BLINK + RIGHT SQUEEZE",
+    dashboardLabel: "BLINK + RIGHT SQUEEZE",
+    instruction: "Blink 2 to 4 times, then squeeze right hand once.",
     badgeColor: "bg-[#E8E2D7] text-[#30251F] border-[#D6C7B7]",
     isEmergency: false,
   },
   {
-    action: "WATER",
-    gestureId: "BLINK_4_PLUS",
-    gestureName: "4+ blinks",
-    serialCommand: "[cmd] WATER",
-    dashboardLabel: "WATER",
-    instruction: "Blink 4 or more rapid times to request drinking water.",
+    action: "BLINK_BOTH",
+    gestureId: "BLINK_BOTH",
+    gestureName: "Blink 2-4 times, squeeze both hands once",
+    serialCommand: "[cmd] BLINK + BOTH SQUEEZE",
+    dashboardLabel: "BLINK + BOTH SQUEEZE",
+    instruction: "Blink 2 to 4 times, then squeeze both hands together once.",
     badgeColor: "bg-[#EED9CD] text-[#7A361E] border-[#D6C7B7]",
     isEmergency: false,
   },
   {
+    action: "YES",
+    gestureId: "RIGHT_2",
+    gestureName: "Squeeze right hand twice",
+    serialCommand: "[cmd] 2 RIGHT SQUEEZES",
+    dashboardLabel: "2 RIGHT SQUEEZES (YES)",
+    instruction: "Squeeze right hand twice to indicate affirmative / yes.",
+    badgeColor: "bg-[#EAF3EF] text-[#287A59] border-[#BEDECE]",
+    isEmergency: false,
+  },
+  {
     action: "NO",
-    gestureId: "SQUEEZE_BOTH_1",
-    gestureName: "Squeeze both hands together, once",
-    serialCommand: "[cmd] NO",
-    dashboardLabel: "NO",
-    instruction: "Squeeze both hands together firmly once to indicate negative / no.",
+    gestureId: "LEFT_2",
+    gestureName: "Squeeze left hand twice",
+    serialCommand: "[cmd] 2 LEFT SQUEEZES",
+    dashboardLabel: "2 LEFT SQUEEZES (NO)",
+    instruction: "Squeeze left hand twice to indicate negative / no.",
     badgeColor: "bg-[#F4DFC8] text-[#8C4318] border-[#DFBA9C]",
     isEmergency: false,
   },
   {
-    action: "CALL_NURSE",
-    gestureId: "SQUEEZE_LEFT_3",
-    gestureName: "Squeeze left hand 3 times",
-    serialCommand: "[cmd] CALL NURSE",
-    dashboardLabel: "CALL NURSE",
-    instruction: "Squeeze left hand 3 distinct times to summon bedside nurse.",
+    action: "BOTH_2",
+    gestureId: "BOTH_2",
+    gestureName: "Squeeze both hands at the same time twice",
+    serialCommand: "[cmd] 2 BOTH SQUEEZES",
+    dashboardLabel: "2 BOTH SQUEEZES",
+    instruction: "Squeeze both hands at the same time twice.",
     badgeColor: "bg-[#E5DFD7] text-[#30251F] border-[#CEBEB0]",
     isEmergency: false,
   },
   {
     action: "EMERGENCY",
-    gestureId: "SQUEEZE_BOTH_3",
-    gestureName: "Squeeze both hands together, 3 times",
+    gestureId: "BOTH_4",
+    gestureName: "Squeeze both hands together 4 times",
     serialCommand: "[cmd] EMERGENCY / SEVERE PAIN",
     dashboardLabel: "EMERGENCY, LEDs 1–4 flash red",
-    instruction: "Squeeze both hands together 3 rapid times for acute emergency & pain alert.",
+    instruction: "Squeeze both hands at the same time 4 times (The onboard RGB LEDs will flash red and raise alarm!).",
     badgeColor: "bg-[#C56845] text-[#FFFCF7] border-[#A84A29]",
     isEmergency: true,
+  },
+  {
+    action: "BLINK_LEFT",
+    gestureId: "BLINK_LEFT",
+    gestureName: "Blink 2-4 times, squeeze left hand once",
+    serialCommand: "[cmd] BLINK + LEFT SQUEEZE",
+    dashboardLabel: "BLINK + LEFT SQUEEZE",
+    instruction: "Blink 2 to 4 times, then squeeze left hand once.",
+    badgeColor: "bg-[#EED9CD] text-[#7A361E] border-[#D6C7B7]",
+    isEmergency: false,
   },
 ];
 
@@ -140,15 +162,29 @@ export class PatientService {
       .populate("device", "deviceId name status firmwareVersion connectivityStatus")
       .lean();
 
+    const assignmentIds = activeAssignments.map((a) => a._id);
+    const commStates = await PatientCommunicationState.find({
+      assignment: { $in: assignmentIds },
+    }).lean();
+    const commStateMap = new Map();
+    commStates.forEach((cs) => {
+      commStateMap.set(cs.assignment.toString(), cs);
+    });
+
     const assignmentMap = new Map();
     activeAssignments.forEach((assign) => {
       assignmentMap.set(assign.patient.toString(), assign);
     });
 
-    const items = patients.map((p) => ({
-      ...p,
-      currentAssignment: assignmentMap.get(p._id.toString()) || null,
-    }));
+    const items = patients.map((p) => {
+      const currentAssignment = assignmentMap.get(p._id.toString()) || null;
+      const communicationState = currentAssignment ? commStateMap.get(currentAssignment._id.toString()) || null : null;
+      return {
+        ...p,
+        currentAssignment,
+        communicationState,
+      };
+    });
 
     return {
       items,
@@ -203,9 +239,14 @@ export class PatientService {
       .populate("device", "deviceId name status firmwareVersion connectivityStatus hardwareId")
       .lean();
 
+    const communicationState = currentAssignment
+      ? await PatientCommunicationState.findOne({ assignment: currentAssignment._id }).lean()
+      : null;
+
     return {
       ...patient,
       currentAssignment: currentAssignment || null,
+      communicationState: communicationState || null,
       commands: PREDEFINED_COMMANDS,
     };
   }
@@ -296,15 +337,29 @@ export class PatientService {
     };
   }
 
+  // Helper for resilient patient document lookup (case-insensitive & trimmed)
+  async findPatientDoc(patientCode: string): Promise<IPatient> {
+    const trimmed = (patientCode || "").trim();
+    const patient = await Patient.findOne({
+      $or: [
+        { patientCode: trimmed },
+        { patientCode: trimmed.toUpperCase() },
+        { patientCode: trimmed.toLowerCase() },
+        ...(mongoose.isValidObjectId(trimmed) ? [{ _id: trimmed }] : []),
+      ],
+    });
+    if (!patient) {
+      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    }
+    return patient;
+  }
+
   // Nurse Requests Assignment to Patient (with optional entered Bed Number)
   async requestNurseAssignment(
     patientCode: string,
     nurseData: { nurseId?: string; nurseName: string; nurseRole?: string; bedNumber?: string; bedLabel?: string }
   ) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
-    }
+    const patient = await this.findPatientDoc(patientCode);
 
     const proposedBed = (nurseData.bedNumber || nurseData.bedLabel || "").trim().toUpperCase();
 
@@ -350,10 +405,7 @@ export class PatientService {
   // Patient Approves Nurse Request (with optional Bed Number confirmation)
   // STRICT RULE: ONLY PATIENT CAN APPROVE THE SEND CARE REQUEST LINK
   async approveNurseAssignment(patientCode: string, bedLabel?: string, approvingUserIdentifier?: string) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
-    }
+    const patient = await this.findPatientDoc(patientCode);
 
     // Security check: ONLY patient can approve the send care request link
     if (approvingUserIdentifier) {
@@ -439,9 +491,18 @@ export class PatientService {
 
   // Nurse Deallocates Patient by Herself
   async deallocateNurse(patientCode: string) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
+    const patient = await this.findPatientDoc(patientCode);
+
+    // If there is an unapproved pending bed proposal tied to this nurse link, release it
+    if (patient.pendingBedLabel) {
+      await Bed.updateOne(
+        { bedNumber: patient.pendingBedLabel, pendingPatient: patient._id },
+        { $set: { status: "AVAILABLE", pendingPatient: null, assignedNurse: null } }
+      );
+      patient.pendingBedLabel = undefined;
+      if (patient.bedStatus === "PENDING_APPROVAL") {
+        patient.bedStatus = patient.bedLabel ? "OCCUPIED" : "NONE";
+      }
     }
 
     patient.nurseAssignment = {
@@ -455,29 +516,23 @@ export class PatientService {
     };
 
     await patient.save();
-    return this.getPatientByCode(patientCode);
+    return this.getPatientByCode(patient.patientCode);
   }
 
   // Patient Rejects Nurse Request
   async rejectNurseAssignment(patientCode: string) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
-    }
+    const patient = await this.findPatientDoc(patientCode);
 
     patient.nurseAssignment.status = "REJECTED";
     patient.nurseAssignment.rejectedAt = new Date();
 
     await patient.save();
-    return this.getPatientByCode(patientCode);
+    return this.getPatientByCode(patient.patientCode);
   }
 
   // Patient Directly Triggers Command (Bedside Touchscreen / Simulation)
   async triggerPatientCommand(patientCode: string, actionName: string) {
-    const patient = await Patient.findOne({ patientCode });
-    if (!patient) {
-      throw new AppError(404, "PATIENT_NOT_FOUND", `Patient '${patientCode}' not found`);
-    }
+    const patient = await this.findPatientDoc(patientCode);
 
     // Requirement 6: Check confirmed bed assignment
     if (!patient.bedLabel || patient.bedStatus === "PENDING_APPROVAL" || patient.status === "PENDING_BED_APPROVAL") {
@@ -511,6 +566,115 @@ export class PatientService {
       );
     }
 
+    const isYes = actionName.toUpperCase() === "YES" || actionName.toUpperCase() === "CONFIRM_RESOLVED";
+    const isNo = actionName.toUpperCase() === "NO" || actionName.toUpperCase() === "REJECT_RESOLVED";
+
+    // 1. Check if patient is responding to a pending resolution confirmation
+    if (isYes || isNo) {
+      const pendingResolution = await CareRequest.findOne({
+        patient: patient._id,
+        status: "PENDING_PATIENT_CONFIRMATION",
+        confirmationExpiresAt: { $gt: new Date() },
+      }).sort({ confirmationRequestedAt: -1 });
+
+      if (pendingResolution) {
+        if (isYes) {
+          pendingResolution.status = "RESOLVED";
+          pendingResolution.resolvedAt = new Date();
+          pendingResolution.resolvedBy = "PATIENT_CONFIRMED";
+          pendingResolution.patientConfirmedAt = new Date();
+          pendingResolution.patientDisputedAt = undefined;
+          pendingResolution.confirmationNote = "Patient confirmed care received (Bedside Touchscreen / Yes)";
+          await pendingResolution.save();
+
+          broadcastBedsideAudio({
+            type: "PATIENT_CONFIRMATION_RESULT",
+            requestId: String(pendingResolution._id),
+            deviceId: (activeAssignment.device as any).deviceId,
+            patientCode: patient.patientCode,
+            patientName: patient.displayName,
+            bedLabel: patient.bedLabel,
+            resolved: true,
+            speechPrompt: "Thank you. Call marked as resolved by patient.",
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          pendingResolution.status = "IN_PROGRESS";
+          pendingResolution.urgent = true; // Escalated
+          pendingResolution.patientDisputedAt = new Date();
+          pendingResolution.patientConfirmedAt = undefined;
+          pendingResolution.resolvedBy = undefined;
+          pendingResolution.confirmationNote = "Patient reported care was NOT received (Disputed via No)";
+          await pendingResolution.save();
+
+          broadcastBedsideAudio({
+            type: "PATIENT_CONFIRMATION_RESULT",
+            requestId: String(pendingResolution._id),
+            deviceId: (activeAssignment.device as any).deviceId,
+            patientCode: patient.patientCode,
+            patientName: patient.displayName,
+            bedLabel: patient.bedLabel,
+            resolved: false,
+            speechPrompt: "Nurse re-alerted. Help is on the way.",
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        const populated = await CareRequest.findById(pendingResolution._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return populated || pendingResolution;
+      }
+
+      // 2. Check if patient is responding to a pending dispatch confirmation
+      const pendingDispatch = await CareRequest.findOne({
+        patient: patient._id,
+        status: "PENDING_DISPATCH_CONFIRMATION",
+        confirmationExpiresAt: { $gt: new Date() },
+      }).sort({ confirmationRequestedAt: -1 });
+
+      if (pendingDispatch) {
+        if (isYes) {
+          pendingDispatch.status = "NEW";
+          pendingDispatch.confirmationRequestedAt = undefined;
+          pendingDispatch.confirmationExpiresAt = undefined;
+          await pendingDispatch.save();
+
+          broadcastBedsideAudio({
+            type: "REQUEST_DISPATCHED",
+            requestId: String(pendingDispatch._id),
+            deviceId: (activeAssignment.device as any).deviceId,
+            patientCode: patient.patientCode,
+            patientName: patient.displayName,
+            bedLabel: patient.bedLabel,
+            speechPrompt: "Your request has been sent.",
+            timestamp: new Date().toISOString(),
+          });
+        } else {
+          pendingDispatch.status = "CANCELLED";
+          await pendingDispatch.save();
+
+          broadcastBedsideAudio({
+            type: "REQUEST_CANCELLED",
+            requestId: String(pendingDispatch._id),
+            deviceId: (activeAssignment.device as any).deviceId,
+            patientCode: patient.patientCode,
+            patientName: patient.displayName,
+            bedLabel: patient.bedLabel,
+            speechPrompt: "Request cancelled.",
+            timestamp: new Date().toISOString(),
+          });
+        }
+
+        const populated = await CareRequest.findById(pendingDispatch._id)
+          .populate("device", "deviceId name status")
+          .populate("patient", "patientCode displayName bedLabel status");
+
+        return populated || pendingDispatch;
+      }
+    }
+
     const targetCmd = PREDEFINED_COMMANDS.find(
       (c) => c.action.toUpperCase() === actionName.toUpperCase()
     ) || {
@@ -519,6 +683,34 @@ export class PatientService {
       gestureName: actionName,
       isEmergency: actionName.toUpperCase() === "EMERGENCY",
     };
+
+    // 3. Requirement: Max active requests per patient (emergency bypasses this limit)
+    if (!targetCmd.isEmergency) {
+      const activeCount = await CareRequest.countDocuments({
+        patient: patient._id,
+        status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_DISPATCH_CONFIRMATION", "PENDING_PATIENT_CONFIRMATION"] },
+      });
+
+      if (activeCount >= MAX_ACTIVE_REQUESTS_PER_PATIENT) {
+        broadcastBedsideAudio({
+          type: "REQUEST_LIMIT_REACHED",
+          deviceId: (activeAssignment.device as any).deviceId,
+          patientCode: patient.patientCode,
+          patientName: patient.displayName,
+          bedLabel: patient.bedLabel,
+          activeCount,
+          maxLimit: MAX_ACTIVE_REQUESTS_PER_PATIENT,
+          speechPrompt: `Active request limit reached. ${MAX_ACTIVE_REQUESTS_PER_PATIENT} calls are already pending for your bed. Please wait for nursing staff, or trigger emergency if urgent.`,
+          timestamp: new Date().toISOString(),
+        });
+
+        throw new AppError(
+          429,
+          "ACTIVE_REQUEST_LIMIT_REACHED",
+          `Patient '${patientCode}' has reached the maximum of ${MAX_ACTIVE_REQUESTS_PER_PATIENT} active requests. Only EMERGENCY requests can be added until existing requests are resolved.`
+        );
+      }
+    }
 
     const eventId = `EVT-PT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
 

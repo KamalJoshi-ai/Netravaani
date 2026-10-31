@@ -15,6 +15,7 @@ import {
   validateRuleSetAll,
 } from "../shared/commandRules.js";
 import { DEFAULT_SPEECH_TEMPLATES } from "../shared/speechDefaults.js";
+import { deviceCommandService } from "./deviceCommandService.js";
 
 /** The six defaults with their voice phrases. */
 const defaultEditableRules = (): EditableRule[] =>
@@ -230,13 +231,16 @@ export class CommandRuleService {
 
   async getRules(deviceId: string) {
     const device = await this.findDevice(deviceId);
-    const [rules, versions] = await Promise.all([
-      CommandRule.find({ device: device._id }).sort({ sortOrder: 1 }),
-      DeviceConfig.find({ device: device._id }).sort({ version: -1 }).limit(50),
-    ]);
+    let rules = await CommandRule.find({ device: device._id }).sort({ sortOrder: 1 });
+    if (rules.length === 0) {
+      await this.seedDefaults(device);
+      rules = await CommandRule.find({ device: device._id }).sort({ sortOrder: 1 });
+    }
+    const versions = await DeviceConfig.find({ device: device._id }).sort({ version: -1 }).limit(50);
     const summaries = versions.map(versionSummary);
     return {
       deviceId: device.deviceId,
+      batteryLevel: device.batteryLevel,
       rules: rules.map(docToRule),
       latestVersion: summaries[0] || null,
       versions: summaries,
@@ -281,18 +285,45 @@ export class CommandRuleService {
   }
 
   /**
-   * The compact payload the device downloads. If the newest version is a legacy
-   * gesture-mapping version (no payload), the current rules are sent under that
-   * version number so the device still converges on the version it was told about.
+   * The compact payload the device downloads for nv-5.0.0.
    */
-  async getDevicePayload(deviceId: string) {
-    const device = await this.findDevice(deviceId);
-    const latest = await DeviceConfig.findOne({ device: device._id }).sort({ version: -1 }).lean();
-    if (!latest) return null;
-    if (latest.payload) return latest.payload;
-    const rules = await CommandRule.find({ device: device._id }).sort({ sortOrder: 1 });
-    if (rules.length === 0) return null;
-    return buildDevicePayload(latest.version, rules.map(docToRule));
+  async getDevicePayload(identifier?: string, bearerToken?: string) {
+    const query: any[] = [];
+    if (identifier) {
+      query.push({ deviceId: identifier });
+      query.push({ hardwareId: identifier });
+    }
+    if (bearerToken) {
+      query.push({ token: bearerToken });
+    }
+    if (query.length === 0) {
+      throw new AppError(400, "MISSING_IDENTIFIER", "No device identifier or authorization token provided");
+    }
+
+    const device = await Device.findOne({ $or: query });
+    if (!device) {
+      throw new AppError(404, "DEVICE_NOT_FOUND", `Device '${identifier || "token"}' not found`);
+    }
+
+    const latest = await DeviceConfig.findOne({ device: device._id, "payload.rules": { $exists: true } })
+      .sort({ version: -1 })
+      .lean();
+    if (latest?.payload && Array.isArray((latest.payload as any).rules)) {
+      return latest.payload;
+    }
+
+    let rules = await CommandRule.find({ device: device._id }).sort({ sortOrder: 1 });
+    if (rules.length === 0) {
+      await this.seedDefaults(device);
+      const created = await DeviceConfig.findOne({ device: device._id, "payload.rules": { $exists: true } })
+        .sort({ version: -1 })
+        .lean();
+      if (created?.payload) return created.payload;
+      rules = await CommandRule.find({ device: device._id }).sort({ sortOrder: 1 });
+    }
+
+    const version = latest ? latest.version : 1;
+    return buildDevicePayload(version, rules.map(docToRule));
   }
 
   /** Device event CONFIG_APPLIED: marks that version APPLIED. */
@@ -315,6 +346,27 @@ export class CommandRuleService {
   async displayLabelFor(device: IDevice, ruleId: string): Promise<string | undefined> {
     const rule = await CommandRule.findOne({ device: device._id, ruleKey: ruleId }).select("displayLabel").lean();
     return rule?.displayLabel || undefined;
+  }
+
+  /** Voice phrase for a rule that fired, if the caregiver set one. */
+  async speechTemplateFor(device: IDevice, ruleId: string): Promise<string | undefined> {
+    const rule = await CommandRule.findOne({ device: device._id, ruleKey: ruleId }).select("speechTemplate").lean();
+    return rule?.speechTemplate || undefined;
+  }
+
+  async getYesNoRules(device: IDevice): Promise<{ yesRule?: ICommandRule; noRule?: ICommandRule }> {
+    const yesRule = await CommandRule.findOne({
+      device: device._id,
+      $or: [{ ruleKey: "yes" }, { label: "YES" }],
+    }).lean();
+    const noRule = await CommandRule.findOne({
+      device: device._id,
+      $or: [{ ruleKey: "no" }, { label: "NO" }],
+    }).lean();
+    return {
+      yesRule: (yesRule as unknown as ICommandRule) || undefined,
+      noRule: (noRule as unknown as ICommandRule) || undefined,
+    };
   }
 }
 

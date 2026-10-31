@@ -6,12 +6,14 @@ import { CareRequest, ICareRequest, CareRequestStatus } from "../models/CareRequ
 import { Patient } from "../models/Patient.js";
 import { AppError } from "../middleware/errorHandler.js";
 import { commandRuleService } from "./commandRuleService.js";
+import { deviceCommandService } from "./deviceCommandService.js";
 import { CommandRule } from "../models/CommandRule.js";
 import { speechTemplateFor } from "../shared/speechDefaults.js";
+import { patientCommunicationService } from "./patientCommunicationService.js";
 
 export interface IngestDeviceEventDto {
-  eventId: string;
-  deviceId: string;
+  eventId?: string;
+  deviceId?: string;
   eventType?: string;
   gestureId?: string;
   gesture?: string;
@@ -21,7 +23,7 @@ export interface IngestDeviceEventDto {
   occurredAt?: string | number;
   appliedVersion?: number;
   timestamp?: string | number;
-  // Firmware nv-4.0.0 command rules
+  // Firmware nv-4.0.0 & nv-5.0.0 command rules
   ruleId?: string;
   label?: string;
   alarm?: boolean;
@@ -30,15 +32,30 @@ export interface IngestDeviceEventDto {
   error?: string;
 }
 
-/** Legacy action for the default rule ids, so older dashboard views keep working. */
+/** Legacy action for default rule ids, so older views keep working. */
 const RULE_ACTION: Record<string, string> = {
+  c01: "WATER",
+  c02: "PAIN",
+  c03: "REPOSITION",
+  c04: "CALL_NURSE",
+  c05: "NO",
+  c06: "EMERGENCY",
+  c07: "YES",
   yes: "YES",
   no: "NO",
   water: "WATER",
   call_nurse: "CALL_NURSE",
   adjustment: "REPOSITION",
   emergency: "EMERGENCY",
+  blink_right: "CALL_NURSE",
+  blink_both: "WATER",
+  right_2: "YES",
+  left_2: "NO",
+  both_2: "REPOSITION",
+  blink_left: "CALL_NURSE",
 };
+
+export const MAX_ACTIVE_REQUESTS_PER_PATIENT = 50;
 
 export interface ListCareRequestsQuery {
   page?: number;
@@ -55,9 +72,16 @@ export interface BedsideAudioEvent {
     | "DISPATCH_CONFIRMATION_REQUESTED"
     | "REQUEST_DISPATCHED"
     | "REQUEST_CANCELLED"
+    | "REQUEST_LIMIT_REACHED"
+    | "HANDSHAKE_UPDATED"
     | "HEARTBEAT"
     | "CONNECTED";
   mode?: "DISPATCH_CONFIRMATION" | "RESOLUTION_CONFIRMATION";
+  handshakeStatus?: string;
+  communicationMode?: string;
+  yesSentAt?: string;
+  noSentAt?: string;
+  completedAt?: string;
   requestId?: string;
   deviceId?: string;
   patientCode?: string;
@@ -65,11 +89,18 @@ export interface BedsideAudioEvent {
   bedLabel?: string;
   action?: string;
   actionLabel?: string;
+  ruleId?: string;
+  gesture?: string;
+  counts?: { eog: number; emgLeft: number; emgRight: number; together?: number };
+  urgent?: boolean;
+  alarm?: boolean;
   speechPrompt?: string;
   confirmGesture?: string;
   rejectGesture?: string;
   resolved?: boolean;
   expiresAt?: string;
+  activeCount?: number;
+  maxLimit?: number;
   timestamp: string;
 }
 
@@ -130,45 +161,126 @@ export function normalizeHardwareSerialCommand(input: string): {
   return null;
 }
 
+export function describeGestureFromRuleOrCounts(
+  ruleId?: string,
+  counts?: { eog?: number; emgLeft?: number; emgRight?: number; together?: number },
+  fallback?: string
+): string {
+  if (counts) {
+    const eog = counts.eog || 0;
+    const l = counts.emgLeft || 0;
+    const r = counts.emgRight || 0;
+    const tog = counts.together || (l > 0 && r > 0 ? Math.min(l, r) : 0);
+
+    if (tog > 0) {
+      return `${tog} squeeze${tog > 1 ? "s" : ""} (Both hands together)`;
+    }
+    if (eog > 0 && l === 0 && r === 0) {
+      return `${eog} blink${eog > 1 ? "s" : ""} (Forehead EOG)`;
+    }
+    if (l > 0 && r === 0) {
+      return `${l} left wrist squeeze${l > 1 ? "s" : ""}`;
+    }
+    if (r > 0 && l === 0) {
+      return `${r} right wrist squeeze${r > 1 ? "s" : ""}`;
+    }
+    if (l > 0 && r > 0) {
+      return `${l} left, ${r} right wrist squeezes`;
+    }
+  }
+
+  const key = (ruleId || fallback || "").toLowerCase();
+  if (key === "yes" || key === "c07") return "3–4 blinks (Forehead EOG)";
+  if (key === "no" || key === "c05") return "1–2 squeezes (Both hands together)";
+  if (key === "water" || key === "c01") return "5+ blinks (Forehead EOG)";
+  if (key === "call_nurse" || key === "call nurse" || key === "c04") return "3+ left wrist squeezes";
+  if (key === "adjustment" || key === "reposition" || key === "c03") return "3+ right wrist squeezes";
+  if (key === "emergency" || key === "c06") return "3+ squeezes (Both hands together, alarm)";
+
+  return fallback || ruleId || "Unknown gesture";
+}
+
+const processedEventIds = new Set<string>();
+
 export class CareRequestService {
   /**
    * Ingest recognized gesture event from hardware identity
    * Validates device, handles hardware firmware directly or through configured assignments.
    * Handles event deduplication.
    */
-  async ingestDeviceEvent(dto: IngestDeviceEventDto): Promise<{ isDuplicate: boolean; careRequest?: ICareRequest; accepted?: boolean }> {
-    const { eventId, deviceId, eventType, gestureId, gesture, action, urgent, configVersion, appliedVersion } = dto;
+  async ingestDeviceEvent(dto: IngestDeviceEventDto, bearerToken?: string): Promise<{
+    isDuplicate: boolean;
+    careRequest?: ICareRequest;
+    accepted?: boolean;
+    reason?: string;
+    message?: string;
+  }> {
+    const effectiveEventId = dto.eventId || `evt_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+    const { deviceId, eventType, gestureId, gesture, action, urgent, configVersion, appliedVersion } = dto;
     const { ruleId, label, alarm, counts, rejectedVersion, error } = dto;
 
     // Deduplication check: return existing if eventId was already processed
-    const existing = await CareRequest.findOne({ eventId })
+    if (dto.eventId && processedEventIds.has(dto.eventId)) {
+      return {
+        isDuplicate: true,
+        accepted: true,
+        message: "Event already processed (deduplicated)",
+      };
+    }
+
+    const existing = await CareRequest.findOne({ eventId: effectiveEventId })
       .populate("device", "deviceId name status")
       .populate("patient", "patientCode displayName bedLabel status");
 
     if (existing) {
+      if (dto.eventId) processedEventIds.add(dto.eventId);
       return {
         isDuplicate: true,
         careRequest: existing,
       };
     }
 
-    // 1. Verify Device
-    const device = await Device.findOne({ deviceId });
+    // 1. Verify Device: check by deviceId, hardwareId, or bearerToken
+    let device: any = null;
+    if (deviceId) {
+      device = await Device.findOne({ $or: [{ deviceId }, { hardwareId: deviceId }] });
+    }
+    if (!device && bearerToken) {
+      device = await Device.findOne({ token: bearerToken });
+    }
     if (!device) {
-      throw new AppError(404, "DEVICE_NOT_FOUND", `Device '${deviceId}' not found`);
+      throw new AppError(404, "DEVICE_NOT_FOUND", `Device '${deviceId || "token"}' not found`);
     }
 
     if (device.status === "DISABLED") {
-      throw new AppError(400, "DEVICE_DISABLED", `Cannot ingest events for disabled device '${deviceId}'`);
+      throw new AppError(400, "DEVICE_DISABLED", `Cannot ingest events for disabled device '${device.deviceId}'`);
     }
 
-    // Update lastSeen and appliedConfigVersion if event indicates config applied
+    // Update lastSeen, connectivity status, and battery telemetry
     device.lastSeenAt = new Date();
     device.connectivityStatus = "ONLINE";
+
+    const rawBattery =
+      (dto as any).batteryLevel ??
+      (dto as any).battery ??
+      (dto as any).batteryLevelPct ??
+      (dto as any).batteryPct ??
+      (dto as any).batt ??
+      (dto as any).battery_level;
+
+    if (rawBattery !== undefined && rawBattery !== null && !isNaN(Number(rawBattery))) {
+      const numBatt = Number(rawBattery);
+      if (numBatt > 0 && numBatt <= 5.0) {
+        device.batteryLevel = Math.max(0, Math.min(100, Math.round(((numBatt - 3.3) / 0.9) * 100)));
+      } else {
+        device.batteryLevel = Math.max(0, Math.min(100, Math.round(numBatt)));
+      }
+    }
     if (eventType === "CONFIG_APPLIED" && appliedVersion) {
       device.appliedConfigVersion = appliedVersion;
       await device.save();
       await commandRuleService.markApplied(device, appliedVersion);
+      await deviceCommandService.markApplied(device, appliedVersion);
       return { isDuplicate: false, accepted: true };
     }
     if (eventType === "CONFIG_FAILED") {
@@ -177,6 +289,7 @@ export class CareRequestService {
       await device.save();
       if (rejectedVersion && rejectedVersion >= 1) {
         await commandRuleService.markFailed(device, rejectedVersion, error);
+        await deviceCommandService.markFailed(device, rejectedVersion, error);
       }
       return { isDuplicate: false, accepted: true };
     }
@@ -186,42 +299,46 @@ export class CareRequestService {
     // Check if patient was asked to confirm an outgoing request before sending to nurse
     const now = new Date();
     const gId = (gestureId || ruleId || "").toUpperCase();
-    const isConfirmationEvent = !urgent && !alarm && ruleId !== "emergency" && (
-      ruleId === "yes" || ruleId === "no" ||
-      gId === "YES" || gId === "NO" ||
-      gId.includes("CONFIRM") || gId.includes("CANCEL") ||
-      eventType === "PATIENT_CONFIRMATION" || eventType === "DISPATCH_CONFIRMATION"
-    );
+    const rCounts = counts || { eog: 0, emgLeft: 0, emgRight: 0, together: 0 };
 
-    const pendingDispatch = isConfirmationEvent ? await CareRequest.findOne({
+    const pendingDispatch = await CareRequest.findOne({
       device: device._id,
       status: "PENDING_DISPATCH_CONFIRMATION",
       confirmationExpiresAt: { $gt: now },
     })
       .sort({ confirmationRequestedAt: -1 })
-      .populate("patient", "patientCode displayName bedLabel confirmationSettings") : null;
+      .populate("patient", "patientCode displayName bedLabel confirmationSettings");
 
     if (pendingDispatch) {
       const patientDoc = pendingDispatch.patient as any;
       const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
       const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
-
-      const rCounts = counts || { eog: 0, emgLeft: 0, emgRight: 0, together: 0 };
+      const { yesRule, noRule } = await commandRuleService.getYesNoRules(device);
 
       const isConfirm =
-        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2") || gId === "YES")) ||
+        ruleId === "yes" ||
+        gId === "YES" ||
+        gId === "CONFIRM_DISPATCH" ||
+        gId.includes("SIM-YES") ||
+        (yesRule && rCounts.eog >= yesRule.eogMin && rCounts.eog <= yesRule.eogMax && rCounts.emgLeft <= yesRule.leftMax && rCounts.emgRight <= yesRule.rightMax) ||
+        (!yesRule && rCounts.eog >= 3 && rCounts.eog <= 4 && rCounts.emgLeft === 0 && rCounts.emgRight === 0) ||
+        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2"))) ||
         (confirmGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
         (confirmGesture === "SINGLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 1 || gId.includes("RIGHT_1"))) ||
-        gId === "CONFIRM_DISPATCH" ||
-        gId === "YES" ||
-        ruleId === "yes";
+        ruleId === "c07" ||
+        ruleId === "right_2";
 
       const isCancel =
-        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId === "NO")) ||
-        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
-        gId === "CANCEL_DISPATCH" ||
+        ruleId === "no" ||
         gId === "NO" ||
-        ruleId === "no";
+        gId === "CANCEL_DISPATCH" ||
+        gId.includes("SIM-NO") ||
+        (noRule && (noRule.simultaneous ? (rCounts.together >= noRule.leftMin || (rCounts.emgLeft >= noRule.leftMin && rCounts.emgRight >= noRule.rightMin)) : rCounts.emgLeft >= noRule.leftMin) && rCounts.emgLeft <= noRule.leftMax && rCounts.emgRight <= noRule.rightMax) ||
+        (!noRule && ((rCounts.together >= 1 || (rCounts.emgLeft >= 1 && rCounts.emgRight >= 1)) && rCounts.emgLeft <= 2 && rCounts.emgRight <= 2)) ||
+        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId.includes("LEFT_2") || gId === "EMG_L_1")) ||
+        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        ruleId === "c05" ||
+        ruleId === "left_2";
 
       if (isConfirm) {
         pendingDispatch.status = "NEW";
@@ -267,7 +384,7 @@ export class CareRequestService {
     }
 
     // 2. CLOSED-LOOP RESOLUTION: Check if this device has an active CareRequest awaiting patient resolution confirmation
-    const pendingConfirmation = isConfirmationEvent ? await CareRequest.findOne({
+    const pendingConfirmation = !pendingDispatch ? await CareRequest.findOne({
       device: device._id,
       status: "PENDING_PATIENT_CONFIRMATION",
       confirmationExpiresAt: { $gt: now },
@@ -279,32 +396,43 @@ export class CareRequestService {
       const patientDoc = pendingConfirmation.patient as any;
       const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
       const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
+      const { yesRule, noRule } = await commandRuleService.getYesNoRules(device);
 
-      const rCounts = counts || { eog: 0, emgLeft: 0, emgRight: 0, together: 0 };
-      const gId = (gestureId || ruleId || "").toUpperCase();
-
-      // Check for Confirmation (YES) - Default: Right wrist double squeeze (counts.emgRight >= 2)
+      // Check for Confirmation (YES) - Default: 3–4 blinks or Right wrist double squeeze
       const isConfirm =
-        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2") || gId === "YES")) ||
+        ruleId === "yes" ||
+        gId === "YES" ||
+        gId === "CONFIRM_RESOLVED" ||
+        gId.includes("SIM-YES") ||
+        (yesRule && rCounts.eog >= yesRule.eogMin && rCounts.eog <= yesRule.eogMax && rCounts.emgLeft <= yesRule.leftMax && rCounts.emgRight <= yesRule.rightMax) ||
+        (!yesRule && rCounts.eog >= 3 && rCounts.eog <= 4 && rCounts.emgLeft === 0 && rCounts.emgRight === 0) ||
+        (confirmGesture === "DOUBLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 2 || gId.includes("RIGHT_2"))) ||
         (confirmGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
         (confirmGesture === "SINGLE_SQUEEZE_RIGHT" && (rCounts.emgRight >= 1 || gId.includes("RIGHT_1"))) ||
-        gId === "CONFIRM_RESOLVED" ||
-        gId === "YES" ||
-        ruleId === "yes";
+        ruleId === "c07" ||
+        ruleId === "right_2";
 
-      // Check for Rejection (NO / Disputed) - Default: Left wrist single squeeze (counts.emgLeft >= 1)
+      // Check for Rejection (NO / Disputed) - Default: 1–2 squeezes both hands or Left wrist squeeze
       const isReject =
-        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId === "NO")) ||
-        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
-        gId === "REJECT_RESOLVED" ||
+        ruleId === "no" ||
         gId === "NO" ||
-        ruleId === "no";
+        gId === "REJECT_RESOLVED" ||
+        gId.includes("SIM-NO") ||
+        (noRule && (noRule.simultaneous ? (rCounts.together >= noRule.leftMin || (rCounts.emgLeft >= noRule.leftMin && rCounts.emgRight >= noRule.rightMin)) : rCounts.emgLeft >= noRule.leftMin) && rCounts.emgLeft <= noRule.leftMax && rCounts.emgRight <= noRule.rightMax) ||
+        (!noRule && ((rCounts.together >= 1 || (rCounts.emgLeft >= 1 && rCounts.emgRight >= 1)) && rCounts.emgLeft <= 2 && rCounts.emgRight <= 2)) ||
+        (rejectGesture === "SINGLE_SQUEEZE_LEFT" && (rCounts.emgLeft >= 1 || gId.includes("LEFT_1") || gId.includes("LEFT_2") || gId === "EMG_L_1")) ||
+        (rejectGesture === "DOUBLE_BLINK" && (rCounts.eog >= 2 || gId.includes("BLINK_2"))) ||
+        ruleId === "c05" ||
+        ruleId === "left_2" ||
+        ruleId === "reject_resolved";
 
       if (isConfirm) {
         pendingConfirmation.status = "RESOLVED";
         pendingConfirmation.resolvedAt = new Date();
         pendingConfirmation.resolvedBy = "PATIENT_CONFIRMED";
         pendingConfirmation.patientConfirmedAt = new Date();
+        pendingConfirmation.patientDisputedAt = undefined;
+        pendingConfirmation.confirmationNote = "Patient confirmed care received (Right Wrist Squeeze ×2)";
         await pendingConfirmation.save();
 
         broadcastBedsideAudio({
@@ -330,6 +458,9 @@ export class CareRequestService {
         pendingConfirmation.status = "IN_PROGRESS";
         pendingConfirmation.urgent = true; // Escalated
         pendingConfirmation.patientDisputedAt = new Date();
+        pendingConfirmation.patientConfirmedAt = undefined;
+        pendingConfirmation.resolvedBy = undefined;
+        pendingConfirmation.confirmationNote = "Patient reported care was NOT received (Left Wrist Squeeze)";
         await pendingConfirmation.save();
 
         broadcastBedsideAudio({
@@ -352,9 +483,126 @@ export class CareRequestService {
       }
     }
 
-    // Firmware nv-4.0.0: the request names the command rule that fired.
+    // 3. MANDATORY INITIAL COMMUNICATION HANDSHAKE & REQUEST GATING
+    const ruleIdLower = (ruleId || "").toLowerCase();
+    const actionUpper = (action || "").toUpperCase();
+
+    const { yesRule, noRule } = await commandRuleService.getYesNoRules(device);
+
+    const hasExplicitRule = Boolean(ruleId);
+    const isYesGesture =
+      ruleIdLower === "yes" ||
+      ruleIdLower === "c07" ||
+      ruleIdLower === "right_2" ||
+      gId === "YES" ||
+      actionUpper === "YES" ||
+      gId.includes("SIM-YES") ||
+      (!hasExplicitRule && yesRule && rCounts.eog >= yesRule.eogMin && rCounts.eog <= yesRule.eogMax && rCounts.emgLeft <= yesRule.leftMax && rCounts.emgRight <= yesRule.rightMax) ||
+      (!hasExplicitRule && !yesRule && rCounts.eog >= 3 && rCounts.eog <= 4 && rCounts.emgLeft === 0 && rCounts.emgRight === 0);
+
+    const isNoGesture =
+      ruleIdLower === "no" ||
+      ruleIdLower === "c05" ||
+      ruleIdLower === "left_2" ||
+      gId === "NO" ||
+      actionUpper === "NO" ||
+      gId.includes("SIM-NO") ||
+      (!hasExplicitRule && noRule && (noRule.simultaneous ? (rCounts.together >= noRule.leftMin || (rCounts.emgLeft >= noRule.leftMin && rCounts.emgRight >= noRule.rightMin)) : rCounts.emgLeft >= noRule.leftMin) && rCounts.emgLeft <= noRule.leftMax && rCounts.emgRight <= noRule.rightMax) ||
+      (!hasExplicitRule && !noRule && ((rCounts.together >= 1 || (rCounts.emgLeft >= 1 && rCounts.emgRight >= 1)) && rCounts.emgLeft <= 2 && rCounts.emgRight <= 2));
+
+    const isEmergency =
+      ruleIdLower === "emergency" ||
+      ruleIdLower === "c06" ||
+      Boolean(alarm) ||
+      (Boolean(urgent) && actionUpper === "EMERGENCY") ||
+      actionUpper === "EMERGENCY" ||
+      gId.includes("EMERGENCY") ||
+      (rCounts.together >= 3 && rCounts.emgLeft >= 3 && rCounts.emgRight >= 3);
+
+    const assignment = await DeviceAssignment.findOne({ device: device._id, isActive: true });
+
+    if (assignment) {
+      const commState = await patientCommunicationService.getOrCreateForAssignment(assignment);
+      if (commState && commState.communicationMode === "MANDATORY_HANDSHAKE") {
+        if (isEmergency) {
+          // Safety exception: Emergency alerts are NEVER suppressed during handshake!
+        } else if (isYesGesture) {
+          if (dto.eventId) processedEventIds.add(dto.eventId);
+          const { state: updatedState, transitionedToNormal, isRepeated } =
+            await patientCommunicationService.processHandshakeGesture(assignment._id, "YES");
+          return {
+            isDuplicate: isRepeated,
+            accepted: true,
+            message: isRepeated
+              ? "YES already acknowledged for initial handshake"
+              : transitionedToNormal
+              ? "YES received. Initial handshake COMPLETED! Normal communication mode activated."
+              : "YES received and validated for initial handshake. Waiting for NO.",
+          };
+        } else if (isNoGesture) {
+          if (dto.eventId) processedEventIds.add(dto.eventId);
+          const { state: updatedState, transitionedToNormal, isRepeated } =
+            await patientCommunicationService.processHandshakeGesture(assignment._id, "NO");
+          return {
+            isDuplicate: isRepeated,
+            accepted: true,
+            message: isRepeated
+              ? "NO already acknowledged for initial handshake"
+              : transitionedToNormal
+              ? "NO received. Initial handshake COMPLETED! Normal communication mode activated."
+              : "NO received and validated for initial handshake. Waiting for YES.",
+          };
+        } else {
+          // Reject additional assistance requests (WATER, CALL NURSE, ADJUSTMENT) during handshake
+          return {
+            isDuplicate: false,
+            accepted: false,
+            reason: "HANDSHAKE_INCOMPLETE",
+            message: "Patient initial handshake is incomplete. Only YES, NO, and EMERGENCY gestures are permitted until initial communication is established.",
+          };
+        }
+      } else {
+        // Normal communication mode active: YES and NO must NEVER appear in the Live Calls Ledger
+        if (isYesGesture) {
+          if (dto.eventId) processedEventIds.add(dto.eventId);
+          return {
+            isDuplicate: false,
+            accepted: true,
+            message: "YES gesture received and acknowledged (not added to Live Calls Ledger)",
+          };
+        }
+        if (isNoGesture) {
+          if (dto.eventId) processedEventIds.add(dto.eventId);
+          return {
+            isDuplicate: false,
+            accepted: true,
+            message: "NO gesture received and acknowledged (not added to Live Calls Ledger)",
+          };
+        }
+      }
+    } else {
+      // Unassigned device: YES and NO must NEVER appear in Live Calls Ledger
+      if (isYesGesture) {
+        if (dto.eventId) processedEventIds.add(dto.eventId);
+        return {
+          isDuplicate: false,
+          accepted: true,
+          message: "YES gesture received (not added to Live Calls Ledger)",
+        };
+      }
+      if (isNoGesture) {
+        if (dto.eventId) processedEventIds.add(dto.eventId);
+        return {
+          isDuplicate: false,
+          accepted: true,
+          message: "NO gesture received (not added to Live Calls Ledger)",
+        };
+      }
+    }
+
+    // Firmware nv-4.0.0 & nv-5.0.0: the request names the command rule that fired.
     if (ruleId && (!eventType || eventType === "PATIENT_REQUEST")) {
-      const assignment = await DeviceAssignment.findOne({ device: device._id, isActive: true });
+      const customDisplay = (await commandRuleService.displayLabelFor(device, ruleId)) || (await deviceCommandService.displayLabelFor(device, ruleId));
       const deviceLabel = (label || "").trim() || ruleId;
       const legacyAction =
         RULE_ACTION[ruleId] ||
@@ -364,24 +612,57 @@ export class CareRequestService {
 
       const patientId = assignment?.patient;
       const patientDoc = patientId ? await Patient.findById(patientId) : null;
+
+      // Enforce active requests maximum per patient (Emergency bypasses this limit)
+      if (patientId && !isUrgent && !isAlarm && legacyAction !== "EMERGENCY" && ruleId !== "emergency" && ruleId !== "c06") {
+        const activeCount = await CareRequest.countDocuments({
+          patient: patientId,
+          status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_DISPATCH_CONFIRMATION", "PENDING_PATIENT_CONFIRMATION"] },
+        });
+
+        if (activeCount >= MAX_ACTIVE_REQUESTS_PER_PATIENT) {
+          broadcastBedsideAudio({
+            type: "REQUEST_LIMIT_REACHED",
+            deviceId: device.deviceId,
+            patientCode: patientDoc?.patientCode,
+            patientName: patientDoc?.displayName,
+            bedLabel: patientDoc?.bedLabel,
+            activeCount,
+            maxLimit: MAX_ACTIVE_REQUESTS_PER_PATIENT,
+            speechPrompt: `Active request limit reached. ${MAX_ACTIVE_REQUESTS_PER_PATIENT} calls are already pending for your bed. Please wait for nursing staff, or trigger emergency if urgent.`,
+            timestamp: new Date().toISOString(),
+          });
+
+          return {
+            isDuplicate: false,
+            accepted: false,
+            reason: "MAX_ACTIVE_REQUESTS_REACHED",
+            message: `Patient already has ${MAX_ACTIVE_REQUESTS_PER_PATIENT} active unresolved requests. Please wait for nursing staff or trigger emergency.`,
+          };
+        }
+      }
+
       const requireDispatchConfirm =
         Boolean(patientDoc?.confirmationSettings?.requireDispatchConfirmation) &&
         !isUrgent &&
         ruleId !== "yes" &&
-        ruleId !== "no";
+        ruleId !== "no" &&
+        ruleId !== "c07" &&
+        ruleId !== "c05";
 
       if (requireDispatchConfirm) {
         const dispatchExpiresInSeconds = patientDoc?.confirmationSettings?.dispatchExpiresInSeconds || 15;
         const confirmGesture = patientDoc?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
         const rejectGesture = patientDoc?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
-        const spokenAction = (deviceLabel || legacyAction).replace(/[_]+/g, " ");
+        const spokenAction = (customDisplay || deviceLabel || legacyAction).replace(/[_]+/g, " ");
 
+        const gestureDesc = describeGestureFromRuleOrCounts(ruleId, counts, customDisplay || deviceLabel || legacyAction);
         const careRequest = await CareRequest.create({
-          eventId,
+          eventId: effectiveEventId,
           device: device._id,
           patient: patientId || undefined,
           gestureId: ruleId,
-          gesture: deviceLabel,
+          gesture: gestureDesc,
           ruleId,
           label: deviceLabel,
           counts: counts || undefined,
@@ -394,7 +675,14 @@ export class CareRequestService {
           confirmationExpiresAt: new Date(Date.now() + dispatchExpiresInSeconds * 1000),
         });
 
-        const promptText = `You asked for ${spokenAction}. Squeeze your right wrist twice to send to the nurse, or squeeze your left wrist once to cancel.`;
+        const { yesRule, noRule } = await commandRuleService.getYesNoRules(device);
+        const yesPhrase = yesRule
+          ? (yesRule.eogMin > 0 ? `Blink ${yesRule.eogMin === yesRule.eogMax ? yesRule.eogMin : `${yesRule.eogMin} to ${yesRule.eogMax}`} times` : `Squeeze ${yesRule.leftMin > 0 ? "left wrist" : "right wrist"}`)
+          : "Blink 3 to 4 times";
+        const noPhrase = noRule
+          ? (noRule.simultaneous ? `squeeze both hands together ${noRule.leftMin === noRule.leftMax ? noRule.leftMin : `${noRule.leftMin} to ${noRule.leftMax}`} times` : `squeeze left wrist`)
+          : "squeeze both hands together";
+        const promptText = `You asked for ${spokenAction}. ${yesPhrase} for YES to send to the nurse, or ${noPhrase} for NO to cancel.`;
 
         broadcastBedsideAudio({
           type: "DISPATCH_CONFIRMATION_REQUESTED",
@@ -405,7 +693,12 @@ export class CareRequestService {
           patientName: patientDoc?.displayName,
           bedLabel: patientDoc?.bedLabel,
           action: legacyAction,
-          actionLabel: deviceLabel,
+          actionLabel: customDisplay || deviceLabel,
+          ruleId,
+          gesture: gestureDesc,
+          counts: counts || undefined,
+          urgent: false,
+          alarm: false,
           speechPrompt: promptText,
           confirmGesture,
           rejectGesture,
@@ -420,12 +713,13 @@ export class CareRequestService {
         return { isDuplicate: false, careRequest: populated || careRequest };
       }
 
+      const gestureDesc = describeGestureFromRuleOrCounts(ruleId, counts, customDisplay || deviceLabel || legacyAction);
       const careRequest = await CareRequest.create({
-        eventId,
+        eventId: effectiveEventId,
         device: device._id,
         patient: assignment?.patient || undefined,
         gestureId: ruleId,
-        gesture: deviceLabel,
+        gesture: gestureDesc,
         ruleId,
         label: deviceLabel,
         counts: counts || undefined,
@@ -437,6 +731,12 @@ export class CareRequestService {
         status: "NEW",
       });
 
+      const customSpeech = (await commandRuleService.speechTemplateFor(device, ruleId)) || speechTemplateFor(ruleId);
+      const spokenActionDispatched = (customDisplay || deviceLabel || legacyAction).replace(/[_]+/g, " ");
+      const speechPrompt = customSpeech
+        ? (customSpeech.includes("{command}") ? customSpeech.replace("{command}", spokenActionDispatched) : customSpeech)
+        : (isUrgent ? `Emergency alert: ${spokenActionDispatched} sent to nurse station.` : `Request for ${spokenActionDispatched} sent to nurse station.`);
+
       broadcastBedsideAudio({
         type: "REQUEST_DISPATCHED",
         requestId: String(careRequest._id),
@@ -444,7 +744,14 @@ export class CareRequestService {
         patientCode: patientDoc?.patientCode,
         patientName: patientDoc?.displayName,
         bedLabel: patientDoc?.bedLabel,
-        speechPrompt: isUrgent ? "Emergency request sent to nurse station." : "Your request has been sent.",
+        action: legacyAction,
+        actionLabel: customDisplay || deviceLabel,
+        ruleId,
+        gesture: gestureDesc,
+        counts: counts || undefined,
+        urgent: Boolean(urgent) || isAlarm,
+        alarm: isAlarm,
+        speechPrompt,
         timestamp: new Date().toISOString(),
       });
 
@@ -523,17 +830,22 @@ export class CareRequestService {
         throw new AppError(
           400,
           "GESTURE_NOT_CONFIGURED",
-          `Gesture '${rawGesture}' is not configured in version ${configVersion} of device '${deviceId}'`
+          `Gesture '${rawGesture}' is not configured in version ${configVersion} of device '${device.deviceId}'`
         );
       }
 
+      const gestureDesc = describeGestureFromRuleOrCounts(dto.ruleId, dto.counts, gesture || normalizedGestureId);
       const careRequest = await CareRequest.create({
-        eventId,
+        eventId: effectiveEventId,
         device: device._id,
         patient: (patient as any)._id || activeAssignment.patient,
         gestureId: normalizedGestureId,
-        gesture: gesture || normalizedGestureId,
+        gesture: gestureDesc,
+        ruleId: dto.ruleId,
+        label: dto.label || normalizedGestureId,
+        counts: dto.counts || undefined,
         urgent: Boolean(urgent),
+        alarm: Boolean(dto.alarm),
         action: mapping.action,
         configVersion,
         status: "NEW",
@@ -563,14 +875,42 @@ export class CareRequestService {
     const resolvedGestureName = serialMatch ? serialMatch.gestureName : (gesture || normalizedGestureId);
     const isUrgent = Boolean(urgent || serialMatch?.urgent);
 
+    if (resolvedPatientId && !isUrgent && resolvedAction !== "EMERGENCY") {
+      const activeCount = await CareRequest.countDocuments({
+        patient: resolvedPatientId,
+        status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_DISPATCH_CONFIRMATION", "PENDING_PATIENT_CONFIRMATION"] },
+      });
+      if (activeCount >= MAX_ACTIVE_REQUESTS_PER_PATIENT) {
+        broadcastBedsideAudio({
+          type: "REQUEST_LIMIT_REACHED",
+          deviceId: device.deviceId,
+          activeCount,
+          maxLimit: MAX_ACTIVE_REQUESTS_PER_PATIENT,
+          speechPrompt: `Active request limit reached. ${MAX_ACTIVE_REQUESTS_PER_PATIENT} calls are already pending for your bed. Please wait for nursing staff, or trigger emergency if urgent.`,
+          timestamp: new Date().toISOString(),
+        });
+        return {
+          isDuplicate: false,
+          accepted: false,
+          reason: "MAX_ACTIVE_REQUESTS_REACHED",
+          message: `Patient already has ${MAX_ACTIVE_REQUESTS_PER_PATIENT} active unresolved requests. Please wait for nursing staff or trigger emergency.`,
+        };
+      }
+    }
+
     // 4. Persist Care Request
+    const gestureDesc = describeGestureFromRuleOrCounts(dto.ruleId, dto.counts, resolvedGestureName);
     const careRequest = await CareRequest.create({
-      eventId,
+      eventId: effectiveEventId,
       device: device._id,
       patient: resolvedPatientId,
       gestureId: normalizedGestureId,
-      gesture: resolvedGestureName,
+      gesture: gestureDesc,
+      ruleId: dto.ruleId,
+      label: dto.label || normalizedGestureId,
+      counts: dto.counts || undefined,
       urgent: isUrgent,
+      alarm: Boolean(dto.alarm),
       action: resolvedAction,
       configVersion: device.appliedConfigVersion || 1,
       status: "NEW",
@@ -597,6 +937,10 @@ export class CareRequestService {
     const skip = (page - 1) * limit;
 
     const filter: Record<string, any> = {};
+
+    // Live Calls Ledger requirement: YES and NO must NEVER appear in the Live Calls Ledger
+    filter.action = { $nin: ["YES", "NO"] };
+    filter.ruleId = { $nin: ["yes", "no", "c07", "c05"] };
 
     if (query.status) {
       filter.status = query.status;
@@ -785,7 +1129,7 @@ export class CareRequestService {
         rejectGesture === "SINGLE_SQUEEZE_LEFT"
           ? "squeeze your left wrist once"
           : "squeeze left wrist once";
-      promptText = `Did you receive assistance? ${confirmLabel} for Yes, or ${rejectLabel} for No.`;
+      promptText = `Did you receive assistance? Blink 3 to 4 times for Yes, or squeeze both hands together for No.`;
     }
 
     request.status = "PENDING_PATIENT_CONFIRMATION";
@@ -988,7 +1332,15 @@ export class CareRequestService {
       const confirmGesture = pt?.confirmationSettings?.confirmGesture || "DOUBLE_SQUEEZE_RIGHT";
       const rejectGesture = pt?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
       const actionLabel = (((activeDispatch as any).displayLabel as string) || activeDispatch.label || activeDispatch.action).replace(/_/g, " ");
-      const promptText = `You asked for ${actionLabel}. Squeeze your right wrist twice to send to the nurse, or squeeze your left wrist once to cancel.`;
+      const devDoc = activeDispatch.device as any;
+      const { yesRule, noRule } = devDoc ? await commandRuleService.getYesNoRules(devDoc) : { yesRule: undefined, noRule: undefined };
+      const yesPhrase = yesRule
+        ? (yesRule.eogMin > 0 ? `Blink ${yesRule.eogMin === yesRule.eogMax ? yesRule.eogMin : `${yesRule.eogMin} to ${yesRule.eogMax}`} times` : `Squeeze ${yesRule.leftMin > 0 ? "left wrist" : "right wrist"}`)
+        : "Blink 3 to 4 times";
+      const noPhrase = noRule
+        ? (noRule.simultaneous ? `squeeze both hands together ${noRule.leftMin === noRule.leftMax ? noRule.leftMin : `${noRule.leftMin} to ${noRule.leftMax}`} times` : `squeeze left wrist`)
+        : "squeeze both hands together";
+      const promptText = `You asked for ${actionLabel}. ${yesPhrase} for YES to send to the nurse, or ${noPhrase} for NO to cancel.`;
 
       const secondsRemaining = Math.max(
         0,
@@ -1004,6 +1356,11 @@ export class CareRequestService {
         bedLabel: pt?.bedLabel,
         action: activeDispatch.action,
         actionLabel,
+        ruleId: activeDispatch.ruleId || activeDispatch.gestureId,
+        gesture: activeDispatch.gesture || describeGestureFromRuleOrCounts(activeDispatch.ruleId, activeDispatch.counts, actionLabel),
+        counts: activeDispatch.counts,
+        urgent: activeDispatch.urgent,
+        alarm: activeDispatch.alarm,
         speechPrompt: promptText,
         confirmGesture,
         rejectGesture,
@@ -1032,7 +1389,7 @@ export class CareRequestService {
       const rejectGesture = pt?.confirmationSettings?.rejectGesture || "SINGLE_SQUEEZE_LEFT";
       let promptText = pt?.confirmationSettings?.confirmPromptText;
       if (!promptText) {
-        promptText = `Did you receive assistance? Squeeze your right wrist twice for Yes, or squeeze your left wrist once for No.`;
+        promptText = `Did you receive assistance? Blink 3 to 4 times for Yes, or squeeze both hands together for No.`;
       }
 
       const secondsRemaining = Math.max(
