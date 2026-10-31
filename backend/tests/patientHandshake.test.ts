@@ -41,7 +41,15 @@ describe("NetraVaani Mandatory Initial Communication Handshake & Request Gating"
   });
 
   // Helper to create online device, patient, and assign them
-  async function setupActivePatientDevice(patientName = "Rohan Sharma", deviceName = "NPG-01") {
+  async function setupActivePatientDevice(
+    optionsOrName: string | { name?: string; requireDispatchConfirmation?: boolean } = "Rohan Sharma",
+    deviceName = "NPG-01"
+  ) {
+    const patientName = typeof optionsOrName === "string" ? optionsOrName : (optionsOrName.name || "Rohan Sharma");
+    const requireDispatchConfirm = typeof optionsOrName === "object" && optionsOrName.requireDispatchConfirmation !== undefined
+      ? optionsOrName.requireDispatchConfirmation
+      : false;
+
     // 1. Device registration & online heartbeat
     const devRes = await request(app)
       .post("/api/devices")
@@ -58,9 +66,8 @@ describe("NetraVaani Mandatory Initial Communication Handshake & Request Gating"
       .send({ displayName: patientName, bedLabel: "Bed-101", status: "ACTIVE" });
     const patientCode = ptRes.body.data.patientCode;
 
-    // For direct dispatch testing in scenario 8
     await Patient.findByIdAndUpdate(ptRes.body.data._id, {
-      $set: { "confirmationSettings.requireDispatchConfirmation": false },
+      $set: { "confirmationSettings.requireDispatchConfirmation": requireDispatchConfirm },
     });
 
     // 3. Nurse allocates device to patient
@@ -452,5 +459,114 @@ describe("NetraVaani Mandatory Initial Communication Handshake & Request Gating"
     const state = await request(app).get(`/api/devices/${deviceId}/communication-state`);
     expect(state.body.data.handshakeStatus).toBe("WAITING_FOR_NO");
     expect(state.body.data.communicationMode).toBe("MANDATORY_HANDSHAKE");
+  });
+
+  // 16. Single Active Request Gating: Don't allow any other command to enter dashboard until first issue is solved
+  it("Scenario 16: Active request pending -> Rejects subsequent commands until first problem is solved", async () => {
+    const { deviceId, patientCode } = await setupActivePatientDevice({ requireDispatchConfirmation: false });
+
+    // Complete initial handshake
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "yes" });
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "no" });
+
+    // 1. Patient places first request (WATER)
+    const firstReq = await request(app).post("/api/device-events").send({
+      deviceId,
+      ruleId: "water",
+    });
+    expect(firstReq.body.accepted).toBe(true);
+    expect(firstReq.body.data?.status).toBe("NEW");
+
+    // Live Calls Ledger has exactly 1 call
+    const ledgerBefore = await request(app).get("/api/care-requests");
+    expect(ledgerBefore.body.data.length).toBe(1);
+    expect(ledgerBefore.body.data[0].action).toBe("WATER");
+
+    // 2. Patient tries to place second request (CALL_NURSE) while first is unsolved
+    const secondReq = await request(app).post("/api/device-events").send({
+      deviceId,
+      ruleId: "call_nurse",
+    });
+    expect(secondReq.body.accepted).toBe(false);
+    expect(secondReq.body.reason).toBe("ACTIVE_REQUEST_EXISTS");
+
+    // Ledger still has ONLY 1 call - second command was strictly blocked from entering dashboard!
+    const ledgerAfter = await request(app).get("/api/care-requests");
+    expect(ledgerAfter.body.data.length).toBe(1);
+  });
+
+  // 17. Emergency exception: Emergency always bypasses active request gating
+  it("Scenario 17: Emergency alarm bypasses active request gating even if an issue is unsolved", async () => {
+    const { deviceId } = await setupActivePatientDevice({ requireDispatchConfirmation: false });
+
+    // Complete handshake
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "yes" });
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "no" });
+
+    // First request (WATER)
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "water" });
+
+    // Emergency alarm triggered
+    const emerg = await request(app).post("/api/device-events").send({
+      deviceId,
+      ruleId: "emergency",
+      alarm: true,
+      urgent: true,
+    });
+    expect(emerg.body.accepted).toBe(true);
+    expect(emerg.body.data?.action).toBe("EMERGENCY");
+    expect(emerg.body.data?.alarm).toBe(true);
+  });
+
+  // 18. Solving first issue unlocks next command
+  it("Scenario 18: Resolving first issue unlocks subsequent patient requests", async () => {
+    const { deviceId } = await setupActivePatientDevice({ requireDispatchConfirmation: false });
+
+    // Complete handshake
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "yes" });
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "no" });
+
+    // First request
+    const firstRes = await request(app).post("/api/device-events").send({ deviceId, ruleId: "water" });
+    const requestId = firstRes.body.data._id;
+
+    // Nurse resolves the first request (Acknowledge -> In Progress -> Resolve)
+    await request(app).patch(`/api/care-requests/${requestId}/acknowledge`).send({ acknowledgedBy: "Nurse Joy" });
+    await request(app).patch(`/api/care-requests/${requestId}/in-progress`).send({ handledBy: "Nurse Joy" });
+    await request(app).patch(`/api/care-requests/${requestId}/resolve`).send({ resolvedBy: "Nurse Joy" });
+
+    // Now patient can place next request (CALL_NURSE)
+    const nextReq = await request(app).post("/api/device-events").send({
+      deviceId,
+      ruleId: "call_nurse",
+    });
+    expect(nextReq.body.accepted).toBe(true);
+    expect(nextReq.body.data?.status).toBe("NEW");
+  });
+
+  // 19. Rejecting outgoing request (NO / cancel) purges it; NEVER sent to nurse dashboard
+  it("Scenario 19: Rejecting / cancelling dispatch confirmation purges request and never enters nurse ledger", async () => {
+    const { deviceId } = await setupActivePatientDevice({ requireDispatchConfirmation: true });
+
+    // Complete handshake
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "yes" });
+    await request(app).post("/api/device-events").send({ deviceId, ruleId: "no" });
+
+    // Patient requests WATER with dispatch confirmation enabled
+    const promptRes = await request(app).post("/api/device-events").send({ deviceId, ruleId: "water" });
+    expect(promptRes.body.accepted).toBe(true);
+    expect(promptRes.body.data?.status).toBe("PENDING_DISPATCH_CONFIRMATION");
+
+    // Nurse dashboard ledger MUST NOT show this pending verification request!
+    const ledgerPending = await request(app).get("/api/care-requests");
+    expect(ledgerPending.body.data.length).toBe(0);
+
+    // Patient rejects / cancels by sending NO gesture
+    const rejectRes = await request(app).post("/api/device-events").send({ deviceId, ruleId: "no" });
+    expect(rejectRes.body.accepted).toBe(true);
+
+    // Nurse dashboard ledger MUST REMAIN COMPLETELY EMPTY!
+    const ledgerAfter = await request(app).get("/api/care-requests");
+    expect(ledgerAfter.body.data.length).toBe(0);
   });
 });

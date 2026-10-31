@@ -176,3 +176,17 @@ Keep the response concise and technical.
 Treat every new instruction as an incremental task on top of the existing NetraVaani codebase.
 
 Reuse established knowledge. Inspect only what is necessary. Do not start from zero.
+
+## 14. Bedside Audio & Request Gating Invariants
+
+1. **Single Problem In-Flight Gating**:
+   - Do not permit secondary non-emergency commands (e.g. WATER, CALL_NURSE, ADJUSTMENT) to enter the dashboard when an unresolved request (`NEW`, `ACKNOWLEDGED`, `IN_PROGRESS`) is active for that bed/patient.
+   - Emergency alerts (`EMERGENCY` / `alarm: true`) MUST always bypass gating as a non-negotiable patient safety invariant.
+
+2. **Strict Dispatch Rejection Isolation**:
+   - When a patient cancels or rejects dispatch confirmation at bedside, the request must be immediately deleted/purged from the database.
+   - Unconfirmed or cancelled requests must never appear in `listCareRequests`, `filteredRequests`, or increment `openCallsCount` on the nurse dashboard.
+
+3. **Minimalist Bedside Speaker Interface**:
+   - Keep the bedside speaker screen clean, high-contrast, and uncluttered.
+   - Avoid long instructional paragraphs, explanatory texts, or redundant technical telemetry on the patient view.

@@ -82,6 +82,47 @@ Note: Recording requirements does not mean implementation is complete.
 
 ## 4. Feature Implementation Log
 
+### Feature: Active Request Gating, Strict Dispatch Rejection Isolation, and Clean Bedside UI
+Date: 2026-10-31
+Status: Completed
+
+#### Objective
+1. Prevent any other command from entering dashboard until the first problem/issue is solved.
+2. Strictly eliminate rejected/cancelled dispatch signals from reaching nurse dashboard or Live Calls Ledger.
+3. Streamline Bedside Speaker UI into a clean, minimal, non-cluttered design without verbose descriptive text.
+
+#### Changes implemented
+- Set MAX_ACTIVE_REQUESTS_PER_PATIENT = 1 and enforced active request gating in careRequestService.ts across both patient and device scoping. Any non-emergency command attempted while an active call is pending is rejected with reason: "ACTIVE_REQUEST_EXISTS".
+- Emergency alarm requests (EMERGENCY) continue to bypass gating as a patient life-safety invariant.
+- Upon dispatch rejection or cancellation (isCancel / cancelDispatch), the request is immediately purged via CareRequest.deleteOne().
+- Enforced strict database and query exclusion of PENDING_DISPATCH_CONFIRMATION and CANCELLED status from listCareRequests and frontend/src/app/nurse/page.tsx (filteredRequests and openCallsCount).
+- Redesigned frontend/src/app/bedside-audio/page.tsx into a minimal, clean, high-contrast bedside speaker interface with zero text clutter, clean YES/NO action buttons, active call progress banners, and collapsible audio settings.
+
+#### Files modified
+- backend/src/services/careRequestService.ts
+- frontend/src/app/nurse/page.tsx
+- frontend/src/app/bedside-audio/page.tsx
+- backend/tests/patientHandshake.test.ts
+
+#### APIs / Models / Events changed
+- CareRequestService.ingestDeviceEvent: Added ACTIVE_REQUEST_EXISTS rejection check and immediate deletion on cancel.
+- CareRequestService.cancelDispatch: Purges request record to prevent nurse ledger leaks.
+- CareRequestService.checkPendingDispatchTimeouts: Automatically cancels and purges unconfirmed dispatch requests.
+
+#### Tests
+- Vitest: tests/patientHandshake.test.ts (19/19 passing including Scenarios 16–19).
+- Vitest: commandRules.unit.test.ts, commandRules.api.test.ts, nurseDeviceAllocation.test.ts (43/43 passing).
+- Next.js build: npm --prefix frontend run build (0 errors, 0 warnings).
+
+#### Pending issues
+- None identified for this requirement.
+
+
+### Feature: System Architecture Documentation Refinement
+Date: 2026-10-31
+- Created `docs/system_architecture.md`: Streamlined, unambiguous technical architecture document covering hardware biosignal transduction, firmware count-based rule engine, 5-second bedside confirmation state machine, MongoDB schemas, Next.js frontend, and latency budget.
+
+
 Use this format for every significant task.
 
 ### Feature: [Feature name]

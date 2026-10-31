@@ -55,7 +55,7 @@ const RULE_ACTION: Record<string, string> = {
   blink_left: "CALL_NURSE",
 };
 
-export const MAX_ACTIVE_REQUESTS_PER_PATIENT = 50;
+export const MAX_ACTIVE_REQUESTS_PER_PATIENT = 1;
 
 export interface ListCareRequestsQuery {
   page?: number;
@@ -367,6 +367,7 @@ export class CareRequestService {
       if (isCancel) {
         pendingDispatch.status = "CANCELLED";
         await pendingDispatch.save();
+        await CareRequest.deleteOne({ _id: pendingDispatch._id });
 
         broadcastBedsideAudio({
           type: "REQUEST_CANCELLED",
@@ -379,7 +380,7 @@ export class CareRequestService {
           timestamp: new Date().toISOString(),
         });
 
-        return { isDuplicate: false, accepted: true };
+        return { isDuplicate: false, accepted: true, message: "Request cancelled and rejected by patient. Not sent to nurse dashboard." };
       }
     }
 
@@ -613,10 +614,14 @@ export class CareRequestService {
       const patientId = assignment?.patient;
       const patientDoc = patientId ? await Patient.findById(patientId) : null;
 
-      // Enforce active requests maximum per patient (Emergency bypasses this limit)
-      if (patientId && !isUrgent && !isAlarm && legacyAction !== "EMERGENCY" && ruleId !== "emergency" && ruleId !== "c06") {
+      // Enforce active requests maximum per patient/bed (Emergency bypasses this limit)
+      // Requirement: Don't allow any other command to enter dashboard until first problem or issue is solved.
+      if (!isUrgent && !isAlarm && legacyAction !== "EMERGENCY" && ruleId !== "emergency" && ruleId !== "c06") {
         const activeCount = await CareRequest.countDocuments({
-          patient: patientId,
+          $or: [
+            ...(patientId ? [{ patient: patientId }] : []),
+            { device: device._id },
+          ],
           status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_DISPATCH_CONFIRMATION", "PENDING_PATIENT_CONFIRMATION"] },
         });
 
@@ -629,15 +634,15 @@ export class CareRequestService {
             bedLabel: patientDoc?.bedLabel,
             activeCount,
             maxLimit: MAX_ACTIVE_REQUESTS_PER_PATIENT,
-            speechPrompt: `Active request limit reached. ${MAX_ACTIVE_REQUESTS_PER_PATIENT} calls are already pending for your bed. Please wait for nursing staff, or trigger emergency if urgent.`,
+            speechPrompt: "You already have an active call in progress. Please wait until nursing staff resolves your current request.",
             timestamp: new Date().toISOString(),
           });
 
           return {
             isDuplicate: false,
             accepted: false,
-            reason: "MAX_ACTIVE_REQUESTS_REACHED",
-            message: `Patient already has ${MAX_ACTIVE_REQUESTS_PER_PATIENT} active unresolved requests. Please wait for nursing staff or trigger emergency.`,
+            reason: "ACTIVE_REQUEST_EXISTS",
+            message: "An active request is currently open for this bed. No further requests can be placed until the first issue is solved.",
           };
         }
       }
@@ -875,9 +880,12 @@ export class CareRequestService {
     const resolvedGestureName = serialMatch ? serialMatch.gestureName : (gesture || normalizedGestureId);
     const isUrgent = Boolean(urgent || serialMatch?.urgent);
 
-    if (resolvedPatientId && !isUrgent && resolvedAction !== "EMERGENCY") {
+    if (!isUrgent && resolvedAction !== "EMERGENCY") {
       const activeCount = await CareRequest.countDocuments({
-        patient: resolvedPatientId,
+        $or: [
+          ...(resolvedPatientId ? [{ patient: resolvedPatientId }] : []),
+          { device: device._id },
+        ],
         status: { $in: ["NEW", "ACKNOWLEDGED", "IN_PROGRESS", "PENDING_DISPATCH_CONFIRMATION", "PENDING_PATIENT_CONFIRMATION"] },
       });
       if (activeCount >= MAX_ACTIVE_REQUESTS_PER_PATIENT) {
@@ -886,14 +894,14 @@ export class CareRequestService {
           deviceId: device.deviceId,
           activeCount,
           maxLimit: MAX_ACTIVE_REQUESTS_PER_PATIENT,
-          speechPrompt: `Active request limit reached. ${MAX_ACTIVE_REQUESTS_PER_PATIENT} calls are already pending for your bed. Please wait for nursing staff, or trigger emergency if urgent.`,
+          speechPrompt: "You already have an active call in progress. Please wait until nursing staff resolves your current request.",
           timestamp: new Date().toISOString(),
         });
         return {
           isDuplicate: false,
           accepted: false,
-          reason: "MAX_ACTIVE_REQUESTS_REACHED",
-          message: `Patient already has ${MAX_ACTIVE_REQUESTS_PER_PATIENT} active unresolved requests. Please wait for nursing staff or trigger emergency.`,
+          reason: "ACTIVE_REQUEST_EXISTS",
+          message: "An active request is currently open for this bed. No further requests can be placed until the first issue is solved.",
         };
       }
     }
@@ -942,7 +950,7 @@ export class CareRequestService {
     filter.action = { $nin: ["YES", "NO"] };
     filter.ruleId = { $nin: ["yes", "no", "c07", "c05"] };
 
-    if (query.status) {
+    if (query.status && query.status !== ("ALL" as any)) {
       filter.status = query.status;
     } else {
       filter.status = { $nin: ["PENDING_DISPATCH_CONFIRMATION", "CANCELLED"] };
@@ -1240,6 +1248,8 @@ export class CareRequestService {
 
     request.status = "CANCELLED";
     await request.save();
+    // Strict requirement: Immediately purge cancelled requests so they never reach nurse dashboard
+    await CareRequest.deleteOne({ _id: request._id });
 
     const device = await Device.findById(request.device);
     const patient = await Patient.findById(request.patient);
@@ -1260,7 +1270,7 @@ export class CareRequestService {
   }
 
   /**
-   * Check for expired dispatch confirmations and automatically dispatch them safely
+   * Check for expired dispatch confirmations and automatically cancel unconfirmed signals safely
    */
   async checkPendingDispatchTimeouts(): Promise<number> {
     const expired = await CareRequest.find({
@@ -1272,22 +1282,23 @@ export class CareRequestService {
 
     let count = 0;
     for (const req of expired) {
-      req.status = "NEW";
-      req.confirmationRequestedAt = undefined;
-      req.confirmationExpiresAt = undefined;
+      // Unconfirmed dispatch timeout: cancel and purge to avoid unverified signals reaching nurse
+      req.status = "CANCELLED";
       await req.save();
+      await CareRequest.deleteOne({ _id: req._id });
       count++;
 
       const dev = req.device as any;
       const pt = req.patient as any;
       broadcastBedsideAudio({
-        type: "REQUEST_DISPATCHED",
+        type: "REQUEST_CANCELLED",
         requestId: String(req._id),
         deviceId: dev?.deviceId,
         patientCode: pt?.patientCode,
         patientName: pt?.displayName,
         bedLabel: pt?.bedLabel,
-        speechPrompt: "Your request has been sent.",
+        action: req.action,
+        speechPrompt: "Confirmation timed out. Request cancelled.",
         timestamp: new Date().toISOString(),
       });
     }

@@ -559,9 +559,12 @@ export default function NurseDashboardPage() {
   const filteredRequests = useMemo(() => {
     return requests
       .filter((req) => {
-        // Requirement 5: YES and NO must NEVER appear in the Live Calls Ledger
+        // Requirement: YES and NO must NEVER appear in the Live Calls Ledger
         const act = (req.action || req.ruleId || req.gestureId || "").toUpperCase();
         if (act === "YES" || act === "NO" || act === "C07" || act === "C05") return false;
+
+        // Strict Requirement: Unconfirmed dispatch verifications & rejected/cancelled calls NEVER appear in Nurse Dashboard
+        if (req.status === "PENDING_DISPATCH_CONFIRMATION" || req.status === "CANCELLED") return false;
 
         if (filter !== "ALL" && req.status !== filter) return false;
         if (!searchQuery.trim()) return true;
@@ -672,7 +675,15 @@ export default function NurseDashboardPage() {
 
   const openCallsCount = requests.filter((r) => {
     const act = (r.action || r.ruleId || r.gestureId || "").toUpperCase();
-    return r.status !== "RESOLVED" && act !== "YES" && act !== "NO" && act !== "C07" && act !== "C05";
+    return (
+      r.status !== "RESOLVED" &&
+      r.status !== "CANCELLED" &&
+      r.status !== "PENDING_DISPATCH_CONFIRMATION" &&
+      act !== "YES" &&
+      act !== "NO" &&
+      act !== "C07" &&
+      act !== "C05"
+    );
   }).length;
 
   return (
@@ -1456,25 +1467,6 @@ export default function NurseDashboardPage() {
 
                           {/* Action buttons */}
                           <div className="flex items-center gap-2 self-end sm:self-auto">
-                            {req.status === "PENDING_DISPATCH_CONFIRMATION" && (
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-mono text-teal-800 flex items-center gap-1">
-                                  <Clock className="w-3 h-3 animate-spin" />
-                                  <span>Patient verifying (15s)</span>
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={async () => {
-                                    await apiClient.confirmDispatch(req._id);
-                                    showToast("Request confirmed and dispatched.");
-                                    await fetchRequests(false);
-                                  }}
-                                  className="px-2.5 py-1 rounded-md text-[11px] font-semibold bg-emerald-600 text-white hover:bg-emerald-700 transition"
-                                >
-                                  Dispatch Now
-                                </button>
-                              </div>
-                            )}
                             {req.status === "NEW" && (
                               <button
                                 type="button"
